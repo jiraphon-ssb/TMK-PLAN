@@ -286,6 +286,7 @@ export default function App() {
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
+    localStorage.removeItem('tmk_staff_list');
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
