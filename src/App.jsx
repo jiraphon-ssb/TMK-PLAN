@@ -300,24 +300,13 @@ export default function App() {
   // Dynamic staff list state
   const [staffList, setStaffList] = useState(() => {
     const saved = localStorage.getItem('tmk_staff_list_v2');
-    return saved ? safeReadJson('tmk_staff_list_v2', []) : [];
+    return saved ? safeReadJson('tmk_staff_list_v2', []) : ['มัง', 'MKT', 'Graphic', 'Admin'];
   });
 
   // Dynamic promo channels list state
   const [promoChannels, setPromoChannels] = useState(() => {
     const saved = localStorage.getItem('tmk_promo_channels');
-    if (saved) return safeReadJson('tmk_promo_channels', []);
-    const defaultPromoChannels = ['หลังบ้าน', 'Line Broadcast', 'FB Post', 'TikTok Shop', 'ทุกแพลตฟอร์ม', 'Line/FB Broadcast', 'ทุกแพลตฟอร์ม + BC (Line OA/FB)'];
-    const channelSet = new Set(defaultPromoChannels);
-    initialTasks.forEach(t => {
-      if (t.channel) {
-        t.channel.split(/[,/+\s]+/).forEach(c => {
-          const name = c.trim();
-          if (name) channelSet.add(name);
-        });
-      }
-    });
-    return Array.from(channelSet);
+    return saved ? safeReadJson('tmk_promo_channels', []) : ['หลังบ้าน', 'Line Broadcast', 'FB Post', 'TikTok Shop', 'ทุกแพลตฟอร์ม', 'Line/FB Broadcast', 'ทุกแพลตฟอร์ม + BC (Line OA/FB)'];
   });
   
   // Dashboard & Target States
@@ -506,6 +495,47 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('tmk_total_units', totalUnitsTarget.toString());
   }, [totalUnitsTarget]);
+
+  // Extract staff and channel options dynamically from tasks to prevent empty lists on fresh browser/Vercel load
+  useEffect(() => {
+    if (!tasks || tasks.length === 0) return;
+
+    // 1. Merge staff from tasks
+    const currentStaffSet = new Set(staffList);
+    let staffUpdated = false;
+    tasks.forEach(t => {
+      if (t.responsible) {
+        t.responsible.split(/[,/+\s]+/).forEach(s => {
+          const name = s.trim();
+          if (name && !currentStaffSet.has(name)) {
+            currentStaffSet.add(name);
+            staffUpdated = true;
+          }
+        });
+      }
+    });
+    if (staffUpdated) {
+      setStaffList(Array.from(currentStaffSet));
+    }
+
+    // 2. Merge promo channels from tasks
+    const currentChannelsSet = new Set(promoChannels);
+    let channelsUpdated = false;
+    tasks.forEach(t => {
+      if (t.channel) {
+        t.channel.split(/[,/+\s]+/).forEach(c => {
+          const name = c.trim();
+          if (name && !currentChannelsSet.has(name)) {
+            currentChannelsSet.add(name);
+            channelsUpdated = true;
+          }
+        });
+      }
+    });
+    if (channelsUpdated) {
+      setPromoChannels(Array.from(currentChannelsSet));
+    }
+  }, [tasks]);
 
   // Calc summaries
   const totalActualSales = channels.reduce((sum, ch) => sum + ch.actual, 0);
