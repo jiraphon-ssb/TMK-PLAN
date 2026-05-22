@@ -64,18 +64,6 @@ const getLocalDateString = (date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
-const addDaysToDate = (dateStr, days) => {
-  const date = new Date(`${dateStr}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return getLocalDateString(date);
-};
-
-const formatThaiDateShort = (dateStr) => {
-  const [year, month, day] = dateStr.split('-');
-  if (!year || !month || !day) return dateStr;
-  return `${Number(day)} ${monthNames[Number(month) - 1]} ${year}`;
-};
-
 const safeReadJson = (key, fallback) => {
   try {
     const value = localStorage.getItem(key);
@@ -278,7 +266,10 @@ function SearchableMultiSelect({
 export default function App() {
   // Theme & Page States
   const [theme, setTheme] = useState(() => localStorage.getItem('tmk_theme') || 'light');
-  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('tmk_active_tab') || 'today');
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedTab = localStorage.getItem('tmk_active_tab');
+    return savedTab && savedTab !== 'today' ? savedTab : 'dashboard';
+  });
   const todayStr = getLocalDateString();
   
   // Responsive Screen Width State
@@ -521,30 +512,6 @@ export default function App() {
   const totalActualUnits = products.reduce((sum, prod) => sum + prod.actualUnits, 0);
   const targetCompletedPercent = totalTarget > 0 ? Math.min(999, Number(((totalActualSales / totalTarget) * 100).toFixed(1))) : 0;
   const targetCompletedLabel = Number.isInteger(targetCompletedPercent) ? `${targetCompletedPercent}%` : `${targetCompletedPercent.toFixed(1)}%`;
-  const channelPercentTotal = channels.reduce((sum, ch) => sum + Number(ch.percentage || 0), 0);
-  const nextWeekDate = addDaysToDate(todayStr, 7);
-  const activeTasks = tasks.filter(t => t.status !== 'done');
-  const overdueTasks = activeTasks.filter(t => t.date < todayStr).sort((a, b) => new Date(a.date) - new Date(b.date));
-  const todayTasks = tasks.filter(t => t.date === todayStr).sort((a, b) => (a.status === 'done') - (b.status === 'done'));
-  const upcomingTasks = activeTasks.filter(t => t.date > todayStr && t.date <= nextWeekDate).sort((a, b) => new Date(a.date) - new Date(b.date));
-  const reviewTasks = tasks.filter(t => t.status === 'review').sort((a, b) => new Date(a.date) - new Date(b.date));
-  const duePOs = poTracker.filter(po => po.status !== 'Completed' && po.arrivalDate <= nextWeekDate).sort((a, b) => new Date(a.arrivalDate) - new Date(b.arrivalDate));
-  const lowStockProducts = products.filter(p => Number(p.stockOnHand || 0) - Number(p.reservedUnits || 0) <= Number(p.reorderPoint || 0));
-  const futureDoneTasks = tasks.filter(t => t.status === 'done' && t.date > todayStr);
-  const validationAlerts = [
-    ...(Math.round(channelPercentTotal) !== 100 ? [`สัดส่วนช่องทางขายรวม ${channelPercentTotal}% ควรเท่ากับ 100%`] : []),
-    ...(futureDoneTasks.length ? [`มีงานอนาคตที่ถูก mark สำเร็จแล้ว ${futureDoneTasks.length} งาน`] : []),
-    ...(lowStockProducts.length ? [`มีสินค้าแตะจุดเติมสต็อก ${lowStockProducts.length} รายการ`] : []),
-    ...(duePOs.length ? [`มี PO ที่ควรติดตามภายใน 7 วัน ${duePOs.length} รายการ`] : [])
-  ];
-
-  const getTaskUrgencyClass = (task) => {
-    if (task.status === 'done') return 'done';
-    if (task.date < todayStr) return 'danger';
-    if ((task.priority || 'medium') === 'high') return 'high';
-    if (task.status === 'review') return 'review';
-    return 'normal';
-  };
 
   // Change Month Nav
   const handlePrevMonth = () => {
@@ -857,57 +824,6 @@ export default function App() {
     });
   };
 
-  const renderTaskSupportMeta = (task) => {
-    const comments = task.comments || [];
-    const attachments = task.attachments || [];
-    if (comments.length === 0 && attachments.length === 0) return null;
-    return (
-      <div className="task-support-meta">
-        {comments.length > 0 && (
-          <span><i className="fa-solid fa-comment-dots"></i> {comments.length} ความเห็น</span>
-        )}
-        {attachments.length > 0 && (
-          <span><i className="fa-solid fa-paperclip"></i> {attachments.length} ไฟล์/ลิงก์</span>
-        )}
-      </div>
-    );
-  };
-
-  const renderTaskMiniCard = (task, showDate = true) => {
-    const campObj = campaigns.find(c => c.id === task.camp) || { name: 'ไม่มีแคมเปญ', color: '#64748b', bg: '#f1f5f9', border: '#e2e8f0' };
-    return (
-      <div key={task.id} className={`action-task-card ${getTaskUrgencyClass(task)}`}>
-        <div className="action-task-topline">
-          <span className="campaign-tag" style={{ backgroundColor: campObj.bg, color: campObj.color, border: `1px solid ${campObj.border}` }}>
-            {campObj.name.split(':')[0]}
-          </span>
-          {showDate && <span className="action-task-date">{formatThaiDateShort(task.date)}</span>}
-        </div>
-        <div className="action-task-title">{task.title}</div>
-        <div className="action-task-desc">{task.detail}</div>
-        <div className="action-task-meta">
-          {renderResponsibleTags(task.responsible)}
-          {renderPriorityBadge(task.priority)}
-        </div>
-        {renderTaskSupportMeta(task)}
-        <div className="action-task-actions">
-          {task.status !== 'done' && (
-            <button className="btn btn-success" onClick={() => setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'done' } : t))}>
-              <i className="fa-solid fa-check"></i> เสร็จแล้ว
-            </button>
-          )}
-          {task.status === 'review' && (
-            <button className="btn btn-primary" onClick={() => setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'done' } : t))}>
-              <i className="fa-solid fa-stamp"></i> อนุมัติ
-            </button>
-          )}
-          <button className="btn" onClick={() => openEditTask(task)}>
-            <i className="fa-solid fa-pencil"></i> แก้ไข
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   // Task CRUD Handlers
   const openAddTask = (dateStr) => {
@@ -1182,9 +1098,6 @@ export default function App() {
       {/* Main Tab Links */}
       <div className="nav-tabs-wrapper">
         <nav className="nav-tabs">
-          <button className={`tab-btn ${activeTab === 'today' ? 'active' : ''}`} onClick={() => setActiveTab('today')}>
-            <i className="fa-solid fa-bolt"></i> วันนี้ / งานด่วน
-          </button>
           <button className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <i className="fa-solid fa-chart-pie"></i> แดชบอร์ดเป้าหมาย
           </button>
@@ -1257,122 +1170,6 @@ export default function App() {
       )}
 
       {/* RENDER ACTIVE TAB */}
-
-      {/* 0. Today Command Center */}
-      {activeTab === 'today' && (
-        <div className="today-layout">
-          <section className="today-main">
-            <div className="today-hero card">
-              <div>
-                <span className="section-eyebrow">Today Command Center</span>
-                <h2>งานที่ต้องขยับวันนี้</h2>
-                <p>{formatThaiDateShort(todayStr)} · โฟกัสงานค้าง งานวันนี้ งานรอตรวจ และ PO ที่ใกล้ถึงก่อน</p>
-              </div>
-              <div className="today-kpi-strip">
-                <div><strong>{overdueTasks.length}</strong><span>ค้าง</span></div>
-                <div><strong>{todayTasks.filter(t => t.status !== 'done').length}</strong><span>วันนี้</span></div>
-                <div><strong>{reviewTasks.length}</strong><span>รอตรวจ</span></div>
-                <div><strong>{duePOs.length}</strong><span>PO ใกล้เข้า</span></div>
-              </div>
-            </div>
-
-            {validationAlerts.length > 0 && (
-              <div className="card warning-panel">
-                <h3><i className="fa-solid fa-triangle-exclamation"></i> จุดที่ควรเช็กก่อนใช้ข้อมูลตัดสินใจ</h3>
-                <div className="warning-list">
-                  {validationAlerts.map(alert => <span key={alert}>{alert}</span>)}
-                </div>
-              </div>
-            )}
-
-            <div className="action-section card">
-              <div className="section-header">
-                <h3><i className="fa-solid fa-calendar-day"></i> งานวันนี้</h3>
-                <button className="btn btn-primary" onClick={() => openAddTask(todayStr)}>
-                  <i className="fa-solid fa-plus"></i> เพิ่มงานวันนี้
-                </button>
-              </div>
-              <div className="action-list">
-                {todayTasks.length ? todayTasks.map(task => renderTaskMiniCard(task, false)) : (
-                  <div className="empty-state">วันนี้ยังไม่มีงานในระบบ</div>
-                )}
-              </div>
-            </div>
-
-            <div className="action-section card">
-              <div className="section-header">
-                <h3><i className="fa-solid fa-clock-rotate-left"></i> งานค้างและงานถัดไป 7 วัน</h3>
-              </div>
-              <div className="split-action-grid">
-                <div>
-                  <h4 className="mini-section-title">ค้างอยู่</h4>
-                  <div className="action-list compact">
-                    {overdueTasks.length ? overdueTasks.slice(0, 6).map(task => renderTaskMiniCard(task)) : (
-                      <div className="empty-state">ไม่มีงานค้าง</div>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <h4 className="mini-section-title">กำลังจะถึง</h4>
-                  <div className="action-list compact">
-                    {upcomingTasks.length ? upcomingTasks.slice(0, 8).map(task => renderTaskMiniCard(task)) : (
-                      <div className="empty-state">ยังไม่มีงานใน 7 วันถัดไป</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <aside className="today-side">
-            <div className="card reminder-card">
-              <h3><i className="fa-solid fa-bell"></i> Reminder</h3>
-              <div className="reminder-list">
-                {reviewTasks.slice(0, 5).map(task => (
-                  <button key={task.id} className="reminder-item" onClick={() => openEditTask(task)}>
-                    <span>รอตรวจ</span>
-                    <strong>{task.title}</strong>
-                  </button>
-                ))}
-                {duePOs.map(po => (
-                  <button key={po.id} className="reminder-item" onClick={() => openEditPo(po)}>
-                    <span>PO · {formatThaiDateShort(po.arrivalDate)}</span>
-                    <strong>{po.product} {po.quantity.toLocaleString()} ตัว</strong>
-                  </button>
-                ))}
-                {lowStockProducts.map(prod => (
-                  <button key={prod.id} className="reminder-item" onClick={() => openEditProduct(prod)}>
-                    <span>Stock ต่ำ</span>
-                    <strong>{prod.name}: เหลือใช้ได้ {(Number(prod.stockOnHand || 0) - Number(prod.reservedUnits || 0)).toLocaleString()} ตัว</strong>
-                  </button>
-                ))}
-                {reviewTasks.length === 0 && duePOs.length === 0 && lowStockProducts.length === 0 && (
-                  <div className="empty-state">ยังไม่มีเรื่องด่วนให้เตือน</div>
-                )}
-              </div>
-            </div>
-
-            <div className="card reminder-card">
-              <h3><i className="fa-solid fa-chart-line"></i> Sales Pulse</h3>
-              <div className="sales-pulse">
-                <div>
-                  <span>ยอดจริง</span>
-                  <strong>{totalActualSales.toLocaleString()} ฿</strong>
-                </div>
-                <div>
-                  <span>เป้าหมาย</span>
-                  <strong>{targetCompletedLabel}</strong>
-                </div>
-              </div>
-              <label className="btn" style={{ width: '100%', marginTop: '12px' }}>
-                <i className="fa-solid fa-file-csv"></i> Import Sales CSV
-                <input type="file" accept=".csv,text/csv" onChange={importSalesCsv} style={{ display: 'none' }} />
-              </label>
-              <p className="helper-text">รูปแบบไฟล์: ชื่อช่องทาง, ยอดขาย เช่น TikTok,250000</p>
-            </div>
-          </aside>
-        </div>
-      )}
 
       {/* 1. Dashboard Tab */}
       {activeTab === 'dashboard' && (
