@@ -278,7 +278,7 @@ function SearchableMultiSelect({
 export default function App() {
   // Theme & Page States
   const [theme, setTheme] = useState(() => localStorage.getItem('tmk_theme') || 'light');
-  const [activeTab, setActiveTab] = useState('today');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('tmk_active_tab') || 'today');
   const todayStr = getLocalDateString();
   
   // Responsive Screen Width State
@@ -303,22 +303,12 @@ export default function App() {
   const [poTracker, setPoTracker] = useState(() => safeReadJson('tmk_pos', initialPOs));
   const [remoteReady, setRemoteReady] = useState(!tmkRepository.isConfigured);
   const [remoteStatus, setRemoteStatus] = useState(tmkRepository.isConfigured ? 'กำลังเชื่อมต่อ Supabase...' : 'Local mode');
+  const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
 
   // Dynamic staff list state
   const [staffList, setStaffList] = useState(() => {
-    const saved = localStorage.getItem('tmk_staff_list');
-    if (saved) return safeReadJson('tmk_staff_list', []);
-    const defaultStaff = ['มัง', 'ฝ้าย', 'บีม', 'แตงโม', 'Graphic', 'MKT', 'Admin'];
-    const staffSet = new Set(defaultStaff);
-    initialTasks.forEach(t => {
-      if (t.responsible) {
-        t.responsible.split(/[,/+\s]+/).forEach(s => {
-          const name = s.trim();
-          if (name) staffSet.add(name);
-        });
-      }
-    });
-    return Array.from(staffSet);
+    const saved = localStorage.getItem('tmk_staff_list_v2');
+    return saved ? safeReadJson('tmk_staff_list_v2', []) : [];
   });
 
   // Dynamic promo channels list state
@@ -374,11 +364,7 @@ export default function App() {
   const [poForm, setPoForm] = useState({ id: '', product: '', quantity: 0, orderDate: '', arrivalDate: '', status: 'Pending' });
   const [isPoEditMode, setIsPoEditMode] = useState(false);
   const syncingFromRemoteRef = useRef(false);
-  const initialRemoteSeedRef = useRef(null);
-
-  if (initialRemoteSeedRef.current == null) {
-    initialRemoteSeedRef.current = { campaigns, channels, products, tasks, poTracker, totalTarget, totalUnitsTarget };
-  }
+  const hasRestoredScrollRef = useRef(false);
 
   const applyRemoteData = useCallback((remoteData) => {
     if (!remoteData) return;
@@ -395,17 +381,36 @@ export default function App() {
     }, 500);
   }, []);
 
+  const loadRemoteData = useCallback(async (statusLabel = 'Supabase connected') => {
+    if (!tmkRepository.isConfigured) return;
+    const remoteData = await tmkRepository.loadAll();
+    if (!remoteData) return;
+    applyRemoteData(remoteData);
+    setRemoteStatus(statusLabel);
+  }, [applyRemoteData]);
+
+  const refreshRemoteData = async () => {
+    if (!tmkRepository.isConfigured || isRefreshingRemote) return;
+    const scrollY = window.scrollY;
+    setIsRefreshingRemote(true);
+    try {
+      await loadRemoteData('Supabase refreshed');
+      window.requestAnimationFrame(() => window.scrollTo(0, scrollY));
+    } catch (error) {
+      console.error('Supabase manual refresh failed:', error);
+      setRemoteStatus('Supabase refresh error');
+    } finally {
+      setIsRefreshingRemote(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    const loadRemoteData = async () => {
+    const bootstrapRemoteData = async () => {
       if (!tmkRepository.isConfigured) return;
       try {
-        const remoteData = await tmkRepository.loadAll();
-        if (cancelled || !remoteData) return;
-
-        applyRemoteData(remoteData);
-        setRemoteStatus('Supabase connected');
+        await loadRemoteData();
       } catch (error) {
         console.error('Supabase load failed:', error);
         setRemoteStatus('Supabase error: ใช้ข้อมูลในเครื่องชั่วคราว');
@@ -414,15 +419,12 @@ export default function App() {
       }
     };
 
-    loadRemoteData();
+    bootstrapRemoteData();
 
     const unsubscribe = tmkRepository.subscribeToChanges(async () => {
       if (cancelled) return;
       try {
-        const remoteData = await tmkRepository.loadAll();
-        if (cancelled || !remoteData) return;
-        applyRemoteData(remoteData);
-        setRemoteStatus('Supabase realtime synced');
+        await loadRemoteData('Supabase realtime synced');
       } catch (error) {
         console.error('Supabase realtime refresh failed:', error);
         setRemoteStatus('Supabase realtime error');
@@ -433,7 +435,7 @@ export default function App() {
       cancelled = true;
       unsubscribe();
     };
-  }, [applyRemoteData]);
+  }, [loadRemoteData]);
 
   const saveRemote = useCallback(async (label, saveFn) => {
     if (!remoteReady || !tmkRepository.isConfigured) return;
@@ -472,8 +474,28 @@ export default function App() {
   }, [tasks, saveRemote]);
 
   useEffect(() => {
-    localStorage.setItem('tmk_staff_list', JSON.stringify(staffList));
+    localStorage.setItem('tmk_staff_list_v2', JSON.stringify(staffList));
   }, [staffList]);
+
+  useEffect(() => {
+    localStorage.setItem('tmk_active_tab', activeTab);
+    const savedScroll = sessionStorage.getItem(`tmk_scroll_${activeTab}`);
+    if (!hasRestoredScrollRef.current && savedScroll) {
+      hasRestoredScrollRef.current = true;
+      window.requestAnimationFrame(() => window.scrollTo(0, Number(savedScroll) || 0));
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const saveScroll = () => {
+      sessionStorage.setItem(`tmk_scroll_${activeTab}`, String(window.scrollY));
+    };
+    window.addEventListener('beforeunload', saveScroll);
+    return () => {
+      saveScroll();
+      window.removeEventListener('beforeunload', saveScroll);
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     localStorage.setItem('tmk_promo_channels', JSON.stringify(promoChannels));
@@ -1106,6 +1128,15 @@ export default function App() {
         </div>
 
         <div className="header-actions">
+          <button
+            className="icon-btn"
+            onClick={refreshRemoteData}
+            disabled={!tmkRepository.isConfigured || isRefreshingRemote}
+            title="รีเฟรชข้อมูลจาก Supabase"
+            aria-label="รีเฟรชข้อมูลจาก Supabase"
+          >
+            <i className={`fa-solid fa-rotate ${isRefreshingRemote ? 'fa-spin' : ''}`}></i>
+          </button>
           <button className="btn btn-primary header-main-action" onClick={() => openAddTask(todayStr)}>
             <i className="fa-solid fa-plus"></i>
             <span>เพิ่มงานวันนี้</span>
