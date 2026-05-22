@@ -383,13 +383,13 @@ export default function App() {
   const applyRemoteData = useCallback((remoteData) => {
     if (!remoteData) return;
     syncingFromRemoteRef.current = true;
-    if (remoteData.campaigns.length) setCampaigns(remoteData.campaigns);
-    if (remoteData.channels.length) setChannels(remoteData.channels);
-    if (remoteData.products.length) setProducts(remoteData.products);
-    if (remoteData.tasks.length) setTasks(remoteData.tasks);
-    if (remoteData.poTracker.length) setPoTracker(remoteData.poTracker);
-    if (remoteData.totalTarget) setTotalTarget(remoteData.totalTarget);
-    if (remoteData.totalUnitsTarget) setTotalUnitsTarget(remoteData.totalUnitsTarget);
+    setCampaigns(remoteData.campaigns);
+    setChannels(remoteData.channels);
+    setProducts(remoteData.products);
+    setTasks(remoteData.tasks);
+    setPoTracker(remoteData.poTracker);
+    setTotalTarget(remoteData.totalTarget);
+    setTotalUnitsTarget(remoteData.totalUnitsTarget);
     window.setTimeout(() => {
       syncingFromRemoteRef.current = false;
     }, 0);
@@ -401,7 +401,6 @@ export default function App() {
     const loadRemoteData = async () => {
       if (!tmkRepository.isConfigured) return;
       try {
-        await tmkRepository.seedIfEmpty(initialRemoteSeedRef.current);
         const remoteData = await tmkRepository.loadAll();
         if (cancelled || !remoteData) return;
 
