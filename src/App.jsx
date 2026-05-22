@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { tmkRepository } from './lib/tmkRepository';
 
 // Initial seed data from original HTML (May - June 2026)
 const initialCampaigns = [
@@ -74,6 +75,22 @@ const formatThaiDateShort = (dateStr) => {
   if (!year || !month || !day) return dateStr;
   return `${Number(day)} ${monthNames[Number(month) - 1]} ${year}`;
 };
+
+const safeReadJson = (key, fallback) => {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const normalizeStoredProducts = (products) => products.map(product => ({
+  ...product,
+  stockOnHand: Number(product.stockOnHand || 0),
+  reservedUnits: Number(product.reservedUnits || 0),
+  reorderPoint: Number(product.reorderPoint || 0)
+}));
 
 function SearchableMultiSelect({
   placeholder,
@@ -279,16 +296,18 @@ export default function App() {
   const [timelinePriority, setTimelinePriority] = useState('all');
 
   // Main Data States
-  const [campaigns, setCampaigns] = useState(() => JSON.parse(localStorage.getItem('tmk_campaigns')) || initialCampaigns);
-  const [channels, setChannels] = useState(() => JSON.parse(localStorage.getItem('tmk_channels')) || initialChannels);
-  const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('tmk_products')) || initialProducts);
-  const [tasks, setTasks] = useState(() => JSON.parse(localStorage.getItem('tmk_tasks')) || initialTasks);
-  const [poTracker, setPoTracker] = useState(() => JSON.parse(localStorage.getItem('tmk_pos')) || initialPOs);
+  const [campaigns, setCampaigns] = useState(() => safeReadJson('tmk_campaigns', initialCampaigns));
+  const [channels, setChannels] = useState(() => safeReadJson('tmk_channels', initialChannels));
+  const [products, setProducts] = useState(() => normalizeStoredProducts(safeReadJson('tmk_products', initialProducts)));
+  const [tasks, setTasks] = useState(() => safeReadJson('tmk_tasks', initialTasks));
+  const [poTracker, setPoTracker] = useState(() => safeReadJson('tmk_pos', initialPOs));
+  const [remoteReady, setRemoteReady] = useState(!tmkRepository.isConfigured);
+  const [remoteStatus, setRemoteStatus] = useState(tmkRepository.isConfigured ? 'กำลังเชื่อมต่อ Supabase...' : 'Local mode');
 
   // Dynamic staff list state
   const [staffList, setStaffList] = useState(() => {
     const saved = localStorage.getItem('tmk_staff_list');
-    if (saved) return JSON.parse(saved);
+    if (saved) return safeReadJson('tmk_staff_list', []);
     const defaultStaff = ['มัง', 'ฝ้าย', 'บีม', 'แตงโม', 'Graphic', 'MKT', 'Admin'];
     const staffSet = new Set(defaultStaff);
     initialTasks.forEach(t => {
@@ -305,7 +324,7 @@ export default function App() {
   // Dynamic promo channels list state
   const [promoChannels, setPromoChannels] = useState(() => {
     const saved = localStorage.getItem('tmk_promo_channels');
-    if (saved) return JSON.parse(saved);
+    if (saved) return safeReadJson('tmk_promo_channels', []);
     const defaultPromoChannels = ['หลังบ้าน', 'Line Broadcast', 'FB Post', 'TikTok Shop', 'ทุกแพลตฟอร์ม', 'Line/FB Broadcast', 'ทุกแพลตฟอร์ม + BC (Line OA/FB)'];
     const channelSet = new Set(defaultPromoChannels);
     initialTasks.forEach(t => {
@@ -355,7 +374,50 @@ export default function App() {
   const [poForm, setPoForm] = useState({ id: '', product: '', quantity: 0, orderDate: '', arrivalDate: '', status: 'Pending' });
   const [isPoEditMode, setIsPoEditMode] = useState(false);
 
-  // Sync to Local Storage
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRemoteData = async () => {
+      if (!tmkRepository.isConfigured) return;
+      try {
+        const localSnapshot = { campaigns, channels, products, tasks, poTracker, totalTarget, totalUnitsTarget };
+        await tmkRepository.seedIfEmpty(localSnapshot);
+        const remoteData = await tmkRepository.loadAll();
+        if (cancelled || !remoteData) return;
+
+        if (remoteData.campaigns.length) setCampaigns(remoteData.campaigns);
+        if (remoteData.channels.length) setChannels(remoteData.channels);
+        if (remoteData.products.length) setProducts(remoteData.products);
+        if (remoteData.tasks.length) setTasks(remoteData.tasks);
+        if (remoteData.poTracker.length) setPoTracker(remoteData.poTracker);
+        if (remoteData.totalTarget) setTotalTarget(remoteData.totalTarget);
+        if (remoteData.totalUnitsTarget) setTotalUnitsTarget(remoteData.totalUnitsTarget);
+        setRemoteStatus('Supabase connected');
+      } catch (error) {
+        console.error('Supabase load failed:', error);
+        setRemoteStatus('Supabase error: ใช้ข้อมูลในเครื่องชั่วคราว');
+      } finally {
+        if (!cancelled) setRemoteReady(true);
+      }
+    };
+
+    loadRemoteData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveRemote = async (label, saveFn) => {
+    if (!remoteReady || !tmkRepository.isConfigured) return;
+    try {
+      await saveFn();
+    } catch (error) {
+      console.error(`Supabase save failed: ${label}`, error);
+    }
+  };
+
+  // Sync to local storage and Supabase when configured.
   useEffect(() => {
     localStorage.setItem('tmk_theme', theme);
     document.documentElement.classList.toggle('dark-theme', theme === 'dark');
@@ -363,19 +425,23 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('tmk_campaigns', JSON.stringify(campaigns));
-  }, [campaigns]);
+    saveRemote('campaigns', () => tmkRepository.saveCampaigns(campaigns));
+  }, [campaigns, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_channels', JSON.stringify(channels));
-  }, [channels]);
+    saveRemote('channels', () => tmkRepository.saveChannels(channels));
+  }, [channels, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_products', JSON.stringify(products));
-  }, [products]);
+    saveRemote('products', () => tmkRepository.saveProducts(products));
+  }, [products, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    saveRemote('tasks', () => tmkRepository.saveTasks(tasks));
+  }, [tasks, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_staff_list', JSON.stringify(staffList));
@@ -387,11 +453,13 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('tmk_pos', JSON.stringify(poTracker));
-  }, [poTracker]);
+    saveRemote('purchase orders', () => tmkRepository.savePurchaseOrders(poTracker));
+  }, [poTracker, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_total_target', totalTarget.toString());
-  }, [totalTarget]);
+    saveRemote('target', () => tmkRepository.saveSettings({ totalTarget, totalUnitsTarget }));
+  }, [totalTarget, totalUnitsTarget, remoteReady]);
 
   useEffect(() => {
     localStorage.setItem('tmk_total_units', totalUnitsTarget.toString());
@@ -1002,6 +1070,10 @@ export default function App() {
             </div>
             <h1>Campaign Control Room</h1>
             <p>Sales target, launch work, team execution, and factory PO in one place.</p>
+            <span className={`sync-status ${tmkRepository.isConfigured ? 'remote' : 'local'}`}>
+              <i className={`fa-solid ${tmkRepository.isConfigured ? 'fa-database' : 'fa-laptop'}`}></i>
+              {remoteStatus}
+            </span>
           </div>
         </div>
 

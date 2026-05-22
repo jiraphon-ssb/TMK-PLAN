@@ -246,6 +246,31 @@ body {
   text-overflow: ellipsis;
 }
 
+.sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-muted);
+  background-color: var(--surface);
+}
+
+.sync-status.remote {
+  color: var(--success);
+  background-color: var(--success-light);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.sync-status.local {
+  color: var(--text-muted);
+}
+
 .header-actions {
   display: flex;
   align-items: center;
