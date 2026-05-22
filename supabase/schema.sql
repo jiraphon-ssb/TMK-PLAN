@@ -191,5 +191,15 @@ end $$;
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on all tables in schema public to anon, authenticated;
 
+alter table public.tmk_campaigns disable row level security;
+alter table public.tmk_channels disable row level security;
+alter table public.tmk_products disable row level security;
+alter table public.tmk_tasks disable row level security;
+alter table public.tmk_task_checklist disable row level security;
+alter table public.tmk_task_comments disable row level security;
+alter table public.tmk_task_attachments disable row level security;
+alter table public.tmk_purchase_orders disable row level security;
+alter table public.tmk_settings disable row level security;
+
 -- Phase 1: no complex roles yet. Keep access simple while the app has no login.
 -- Add RLS policies before exposing this project to untrusted users.
