@@ -2520,18 +2520,6 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="approval-callout">
-                <div>
-                  <strong>Workflow ตรวจอนุมัติ</strong>
-                  <span>ใช้สถานะ Review เมื่องานพร้อมส่งตรวจ แล้วกดอนุมัติจากหน้า Today หรือ Kanban</span>
-                </div>
-                {taskForm.status !== 'review' && taskForm.status !== 'done' && (
-                  <button type="button" className="btn" onClick={() => setTaskForm({ ...taskForm, status: 'review' })}>
-                    <i className="fa-solid fa-paper-plane"></i> ส่งตรวจ
-                  </button>
-                )}
-              </div>
-
               {/* Task Modal Checklist section */}
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', marginTop: '4px' }}>
                 <label className="form-label" style={{ marginBottom: '6px', display: 'block' }}>เช็คลิสต์งานย่อย (Sub-todos)</label>
@@ -2606,37 +2594,6 @@ export default function App() {
                       if (val) {
                         const newItem = { id: 'sub-' + Date.now() + Math.random().toString(36).substr(2, 5), text: val, completed: false };
                         setTaskForm({ ...taskForm, checklist: [...(taskForm.checklist || []), newItem] });
-                        input.value = '';
-                      }
-                    }}
-                  >
-                    เพิ่ม
-                  </button>
-                </div>
-              </div>
-
-              <div className="modal-subsection">
-                <label className="form-label">คอมเมนต์ / Mention</label>
-                <div className="support-list">
-                  {(taskForm.comments || []).map(comment => (
-                    <div className="support-row" key={comment.id}>
-                      <span>{comment.text}</span>
-                      <button type="button" onClick={() => setTaskForm({ ...taskForm, comments: taskForm.comments.filter(item => item.id !== comment.id) })}>
-                        <i className="fa-solid fa-xmark"></i>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <input id="new-modal-comment" type="text" className="form-input" placeholder="เช่น @MKT ขอ copy final ก่อน 17:00" style={{ flexGrow: 1, padding: '6px 10px', fontSize: '12px' }} />
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => {
-                      const input = document.getElementById('new-modal-comment');
-                      const val = input.value.trim();
-                      if (val) {
-                        setTaskForm({ ...taskForm, comments: [...(taskForm.comments || []), { id: 'comment-' + Date.now(), text: val }] });
                         input.value = '';
                       }
                     }}
