@@ -392,7 +392,7 @@ export default function App() {
     setTotalUnitsTarget(remoteData.totalUnitsTarget);
     window.setTimeout(() => {
       syncingFromRemoteRef.current = false;
-    }, 0);
+    }, 500);
   }, []);
 
   useEffect(() => {
