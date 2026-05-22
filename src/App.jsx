@@ -64,6 +64,43 @@ const getLocalDateString = (date = new Date()) => {
   return `${year}-${month}-${day}`;
 };
 
+const getCampaignStyle = (camp, currentTheme) => {
+  if (!camp) return { backgroundColor: 'var(--surface-hover)', borderColor: 'var(--border)', color: 'var(--text-main)' };
+  
+  const color = camp.color || '#64748b';
+  
+  if (currentTheme === 'dark') {
+    const hexToRgba = (hex, alpha) => {
+      let c = String(hex).trim().replace('#', '');
+      if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+      const r = parseInt(c.substring(0, 2), 16) || 0;
+      const g = parseInt(c.substring(2, 4), 16) || 0;
+      const b = parseInt(c.substring(4, 6), 16) || 0;
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+    
+    try {
+      return {
+        backgroundColor: hexToRgba(color, 0.12),
+        borderColor: hexToRgba(color, 0.35),
+        color: color
+      };
+    } catch {
+      return {
+        backgroundColor: 'rgba(99, 102, 241, 0.12)',
+        borderColor: 'rgba(99, 102, 241, 0.35)',
+        color: color
+      };
+    }
+  } else {
+    return {
+      backgroundColor: camp.bg || '#f1f5f9',
+      borderColor: camp.border || '#e2e8f0',
+      color: color
+    };
+  }
+};
+
 const safeReadJson = (key, fallback) => {
   try {
     const value = localStorage.getItem(key);
@@ -308,6 +345,18 @@ export default function App() {
     const saved = localStorage.getItem('tmk_promo_channels');
     return saved ? safeReadJson('tmk_promo_channels', []) : ['หลังบ้าน', 'Line Broadcast', 'FB Post', 'TikTok Shop', 'ทุกแพลตฟอร์ม', 'Line/FB Broadcast', 'ทุกแพลตฟอร์ม + BC (Line OA/FB)'];
   });
+
+  // Recycle Bin State
+  const [trashItems, setTrashItems] = useState(() => {
+    const saved = localStorage.getItem('tmk_recycle_bin');
+    return saved ? safeReadJson('tmk_recycle_bin', []) : [];
+  });
+  const [showTrashModal, setShowTrashModal] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('tmk_recycle_bin', JSON.stringify(trashItems));
+  }, [trashItems]);
+  
   
   // Dashboard & Target States
   const [totalTarget, setTotalTarget] = useState(() => Number(localStorage.getItem('tmk_total_target')) || 1001580);
@@ -635,20 +684,7 @@ export default function App() {
     setDraggedOverCol(null);
   };
 
-  // Reset to Default
-  const handleResetData = () => {
-    if (confirm('คุณต้องการรีเซ็ตข้อมูลทั้งหมดกลับเป็นค่าเริ่มต้นตามแผนงานเดิมใช่หรือไม่? ข้อมูลที่คุณแก้ไขจะหายไปทั้งหมด')) {
-      setCampaigns(initialCampaigns);
-      setChannels(initialChannels);
-      setProducts(initialProducts);
-      setTasks(initialTasks);
-      setPoTracker(initialPOs);
-      setTotalTarget(1001580);
-      setTotalUnitsTarget(3850);
-      localStorage.clear();
-      window.location.reload();
-    }
-  };
+
 
   // Checklist handlers
   const toggleChecklistItem = (taskId, itemId) => {
@@ -905,6 +941,20 @@ export default function App() {
 
   const deleteTask = (taskId) => {
     if (confirm('ยืนยันที่จะลบหัวข้องานปฏิบัตินี้ออกใช่หรือไม่?')) {
+      const taskToDelete = tasks.find(t => t.id === taskId);
+      if (taskToDelete) {
+        setTrashItems(prev => [
+          ...prev,
+          {
+            id: 'trash-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            originalId: taskToDelete.id,
+            type: 'task',
+            name: taskToDelete.title || 'ไม่มีหัวข้อ',
+            deletedAt: new Date().toISOString(),
+            data: taskToDelete
+          }
+        ]);
+      }
       setTasks(prev => prev.filter(t => t.id !== taskId));
     }
   };
@@ -935,33 +985,25 @@ export default function App() {
 
   const deleteChannel = (id) => {
     if (confirm('คุณต้องการลบช่องทางการขายนี้ใช่หรือไม่?')) {
+      const channelToDelete = channels.find(ch => ch.id === id);
+      if (channelToDelete) {
+        setTrashItems(prev => [
+          ...prev,
+          {
+            id: 'trash-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            originalId: channelToDelete.id,
+            type: 'channel',
+            name: channelToDelete.name || 'ไม่มีชื่อช่องทาง',
+            deletedAt: new Date().toISOString(),
+            data: channelToDelete
+          }
+        ]);
+      }
       setChannels(prev => prev.filter(ch => ch.id !== id));
     }
   };
 
-  const importSalesCsv = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rows = event.target.result
-        .split(/\r?\n/)
-        .map(row => row.split(',').map(cell => cell.trim()))
-        .filter(row => row.length >= 2 && row[0]);
-      const nextChannels = channels.map(ch => ({ ...ch }));
-      rows.forEach(([name, amount]) => {
-        const value = Number(String(amount).replace(/[^\d.-]/g, '')) || 0;
-        const match = nextChannels.find(ch => ch.name.toLowerCase() === name.toLowerCase());
-        if (match) {
-          match.actual = value;
-        }
-      });
-      setChannels(nextChannels);
-      e.target.value = '';
-      alert('นำเข้ายอดขายตามช่องทางเรียบร้อยแล้ว');
-    };
-    reader.readAsText(file);
-  };
+
 
   // Product CRUD Handlers
   const openAddProduct = () => {
@@ -989,6 +1031,20 @@ export default function App() {
 
   const deleteProduct = (id) => {
     if (confirm('คุณต้องการลบสินค้านี้ใช่หรือไม่?')) {
+      const productToDelete = products.find(p => p.id === id);
+      if (productToDelete) {
+        setTrashItems(prev => [
+          ...prev,
+          {
+            id: 'trash-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            originalId: productToDelete.id,
+            type: 'product',
+            name: productToDelete.name || 'ไม่มีชื่อสินค้า',
+            deletedAt: new Date().toISOString(),
+            data: productToDelete
+          }
+        ]);
+      }
       setProducts(prev => prev.filter(p => p.id !== id));
     }
   };
@@ -1019,6 +1075,20 @@ export default function App() {
 
   const deleteCampaign = (id) => {
     if (confirm('ลบแคมเปญนี้ จะทำให้งานทั้งหมดที่ผูกอยู่ไม่มีสีแคมเปญ ต้องการลบใช่หรือไม่?')) {
+      const campaignToDelete = campaigns.find(c => c.id === id);
+      if (campaignToDelete) {
+        setTrashItems(prev => [
+          ...prev,
+          {
+            id: 'trash-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            originalId: campaignToDelete.id,
+            type: 'campaign',
+            name: campaignToDelete.name || 'ไม่มีชื่อแคมเปญ',
+            deletedAt: new Date().toISOString(),
+            data: campaignToDelete
+          }
+        ]);
+      }
       setCampaigns(prev => prev.filter(c => c.id !== id));
     }
   };
@@ -1049,7 +1119,71 @@ export default function App() {
 
   const deletePo = (id) => {
     if (confirm('ต้องการลบประวัติ PO นี้ออกใช่หรือไม่?')) {
+      const poToDelete = poTracker.find(p => p.id === id);
+      if (poToDelete) {
+        setTrashItems(prev => [
+          ...prev,
+          {
+            id: 'trash-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            originalId: poToDelete.id,
+            type: 'po',
+            name: `PO: ${poToDelete.product} (${poToDelete.quantity} ชิ้น)`,
+            deletedAt: new Date().toISOString(),
+            data: poToDelete
+          }
+        ]);
+      }
       setPoTracker(prev => prev.filter(p => p.id !== id));
+    }
+  };
+
+  const restoreTrashItem = (item) => {
+    if (!item || !item.data) return;
+    const type = item.type;
+    const data = item.data;
+    
+    if (type === 'task') {
+      setTasks(prev => {
+        if (prev.some(t => t.id === data.id)) return prev;
+        return [...prev, data];
+      });
+    } else if (type === 'product') {
+      setProducts(prev => {
+        if (prev.some(p => p.id === data.id)) return prev;
+        return [...prev, data];
+      });
+    } else if (type === 'campaign') {
+      setCampaigns(prev => {
+        if (prev.some(c => c.id === data.id)) return prev;
+        return [...prev, data];
+      });
+    } else if (type === 'po') {
+      setPoTracker(prev => {
+        if (prev.some(p => p.id === data.id)) return prev;
+        return [...prev, data];
+      });
+    } else if (type === 'channel') {
+      setChannels(prev => {
+        if (prev.some(c => c.id === data.id)) return prev;
+        return [...prev, data];
+      });
+    }
+    
+    setTrashItems(prev => prev.filter(t => t.id !== item.id));
+    alert(`กู้คืน "${item.name}" เรียบร้อยแล้ว`);
+  };
+
+  const deleteTrashItemPermanently = (itemId) => {
+    const item = trashItems.find(t => t.id === itemId);
+    if (!item) return;
+    if (confirm(`คุณต้องการลบ "${item.name}" ทิ้งให้สิ้นซาก (ถาวร) ใช่หรือไม่?`)) {
+      setTrashItems(prev => prev.filter(t => t.id !== itemId));
+    }
+  };
+
+  const emptyTrash = () => {
+    if (confirm('คุณต้องการล้างถังขยะทั้งหมด (ทิ้งให้สิ้นซาก) ใช่หรือไม่?')) {
+      setTrashItems([]);
     }
   };
 
@@ -1088,9 +1222,6 @@ export default function App() {
             <i className="fa-solid fa-plus"></i>
             <span>เพิ่มงานวันนี้</span>
           </button>
-          <button className="icon-btn" onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')} title={theme === 'light' ? 'เปลี่ยนเป็นโหมดมืด' : 'เปลี่ยนเป็นโหมดสว่าง'} aria-label={theme === 'light' ? 'เปลี่ยนเป็นโหมดมืด' : 'เปลี่ยนเป็นโหมดสว่าง'}>
-            <i className={`fa-solid ${theme === 'light' ? 'fa-moon' : 'fa-sun'}`}></i>
-          </button>
           <div className="data-menu-wrapper">
             <button className={`icon-btn ${showDataMenu ? 'active' : ''}`} onClick={() => setShowDataMenu(prev => !prev)} title="จัดการข้อมูล" aria-label="จัดการข้อมูล">
               <i className="fa-solid fa-ellipsis-vertical"></i>
@@ -1104,19 +1235,18 @@ export default function App() {
                     <small>จัดการชื่อและสีแคมเปญ</small>
                   </span>
                 </button>
-                <label>
-                  <i className="fa-solid fa-file-csv"></i>
+                <button type="button" onClick={() => { setTheme(prev => prev === 'light' ? 'dark' : 'light'); setShowDataMenu(false); }}>
+                  <i className={`fa-solid ${theme === 'light' ? 'fa-moon' : 'fa-sun'}`}></i>
                   <span>
-                    <strong>Import Sales CSV</strong>
-                    <small>อัปเดตยอดขาย: channel, amount</small>
+                    <strong>{theme === 'light' ? 'โหมดมืด (Dark Mode)' : 'โหมดสว่าง (Light Mode)'}</strong>
+                    <small>{theme === 'light' ? 'เปลี่ยนหน้าจอเป็นสีเข้ม' : 'เปลี่ยนหน้าจอเป็นสีสว่าง'}</small>
                   </span>
-                  <input type="file" accept=".csv,text/csv" onChange={(e) => { importSalesCsv(e); setShowDataMenu(false); }} style={{ display: 'none' }} />
-                </label>
-                <button type="button" className="danger" onClick={() => { setShowDataMenu(false); handleResetData(); }}>
-                  <i className="fa-solid fa-arrows-rotate"></i>
+                </button>
+                <button type="button" className="danger" onClick={() => { setShowTrashModal(true); setShowDataMenu(false); }}>
+                  <i className="fa-solid fa-trash-can"></i>
                   <span>
-                    <strong>Reset Data</strong>
-                    <small>กลับค่าเริ่มต้นของแผน</small>
+                    <strong>ถังขยะ (Recycle Bin)</strong>
+                    <small>กู้คืนข้อมูล หรือลบทิ้งถาวร</small>
                   </span>
                 </button>
               </div>
@@ -1311,8 +1441,9 @@ export default function App() {
                 {campaigns.map((camp, index) => {
                   const campTasksCount = tasks.filter(t => t.camp === camp.id).length;
                   const doneTasksCount = tasks.filter(t => t.camp === camp.id && t.status === 'done').length;
+                  const campStyle = getCampaignStyle(camp, theme);
                   return (
-                    <div key={camp.id} style={{ backgroundColor: camp.bg, border: `1px solid ${camp.border}`, padding: '16px', borderRadius: '12px' }}>
+                    <div key={camp.id} style={{ backgroundColor: campStyle.backgroundColor, border: `1px solid ${campStyle.borderColor}`, padding: '16px', borderRadius: '12px' }}>
                       <span style={{ backgroundColor: camp.color, color: 'white', padding: '3px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}>
                         Campaign {index + 1}
                       </span>
@@ -1570,9 +1701,14 @@ export default function App() {
                   const campObj = campaigns.find(c => c.id === task.camp) || { name: 'ไม่มีแคมเปญ', color: '#64748b', bg: '#f1f5f9', border: '#e2e8f0' };
                   return (
                     <div key={task.id} className="task-detail-card" style={{ borderLeft: `5px solid ${campObj.color}` }}>
-                      <span className="campaign-tag" style={{ backgroundColor: campObj.bg, color: campObj.color, border: `1px solid ${campObj.border}` }}>
-                        {campObj.name.split(':')[0]}
-                      </span>
+                      {(() => {
+                        const campStyle = getCampaignStyle(campObj, theme);
+                        return (
+                          <span className="campaign-tag" style={{ backgroundColor: campStyle.backgroundColor, color: campStyle.color, border: `1px solid ${campStyle.borderColor}` }}>
+                            {campObj.name.split(':')[0]}
+                          </span>
+                        );
+                      })()}
                       <div className="title">{task.title}</div>
                       <div className="desc">{task.detail}</div>
                       
@@ -2142,9 +2278,14 @@ export default function App() {
                               <h4 className="timeline-task-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 {task.title}
                               </h4>
-                              <span className="campaign-tag" style={{ backgroundColor: campObj.bg, color: campObj.color, border: `1px solid ${campObj.border}` }}>
-                                {campObj.name.split(':')[0]}
-                              </span>
+                              {(() => {
+                                const campStyle = getCampaignStyle(campObj, theme);
+                                return (
+                                  <span className="campaign-tag" style={{ backgroundColor: campStyle.backgroundColor, color: campStyle.color, border: `1px solid ${campStyle.borderColor}` }}>
+                                    {campObj.name.split(':')[0]}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             
                             <div className="timeline-task-detail-box" style={{ borderLeft: `4px solid ${campObj.color}` }}>
@@ -2204,11 +2345,16 @@ export default function App() {
               
               return (
                 <div key={camp.id} className="campaign-card-timeline">
-                  <div className="campaign-header-timeline" style={{ backgroundColor: camp.bg, borderBottom: `1px solid ${camp.border}`, borderLeft: `6px solid ${camp.color}` }}>
-                    <h3 style={{ fontSize: '16px', fontWeight: '700', color: camp.color }}>
-                      {camp.name}
-                    </h3>
-                  </div>
+                  {(() => {
+                    const campStyle = getCampaignStyle(camp, theme);
+                    return (
+                      <div className="campaign-header-timeline" style={{ backgroundColor: campStyle.backgroundColor, borderBottom: `1px solid ${campStyle.borderColor}`, borderLeft: `6px solid ${camp.color}` }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: '700', color: camp.color }}>
+                          {camp.name}
+                        </h3>
+                      </div>
+                    );
+                  })()}
                   <div className="timeline-list">
                     {tasksInView.length === 0 ? (
                       <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '30px' }}>
@@ -2730,6 +2876,105 @@ export default function App() {
               <button type="submit" className="btn btn-primary">บันทึก</button>
             </div>
           </form>
+        </div>
+      )}
+      {/* 6. Recycle Bin Modal */}
+      {showTrashModal && (
+        <div className="modal-overlay">
+          <div className="modal-dialog" style={{ maxWidth: '800px', width: '90%' }}>
+            <div className="modal-header">
+              <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <i className="fa-solid fa-trash-can" style={{ color: 'var(--danger)' }}></i>
+                ถังขยะ (Recycle Bin)
+              </h2>
+              <button type="button" className="modal-close-btn" onClick={() => setShowTrashModal(false)}>&times;</button>
+            </div>
+            
+            <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              <p style={{ fontSize: '13.5px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+                รายการที่ถูกลบจะถูกเก็บไว้ที่นี่ชั่วคราว คุณสามารถเลือกกู้คืนข้อมูลกลับไปยังระบบหลัก หรือเลือกลบทิ้งแบบถาวร (ทิ้งให้สิ้นซาก) ได้
+              </p>
+              {trashItems.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 10px', color: 'var(--text-muted)' }}>
+                  <i className="fa-regular fa-folder-open" style={{ fontSize: '32px', marginBottom: '12px', display: 'block' }}></i>
+                  ถังขยะว่างเปล่า ไม่มีข้อมูลที่ถูกลบ
+                </div>
+              ) : (
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ประเภทข้อมูล</th>
+                        <th>ชื่อข้อมูล / รายละเอียด</th>
+                        <th>เวลาที่ลบ</th>
+                        <th style={{ textAlign: 'center' }}>การจัดการ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trashItems.map(item => {
+                        let typeLabel = '';
+                        let typeIcon = '';
+                        if (item.type === 'task') {
+                          typeLabel = 'งานปฏิบัติการ';
+                          typeIcon = 'fa-list-check';
+                        } else if (item.type === 'product') {
+                          typeLabel = 'กลุ่มสินค้า';
+                          typeIcon = 'fa-shirt';
+                        } else if (item.type === 'campaign') {
+                          typeLabel = 'แคมเปญ';
+                          typeIcon = 'fa-layer-group';
+                        } else if (item.type === 'po') {
+                          typeLabel = 'ประวัติ PO';
+                          typeIcon = 'fa-receipt';
+                        } else if (item.type === 'channel') {
+                          typeLabel = 'ช่องทางขาย';
+                          typeIcon = 'fa-chart-pie';
+                        }
+                        
+                        return (
+                          <tr key={item.id}>
+                            <td>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', padding: '3px 8px', borderRadius: '4px', backgroundColor: 'var(--surface-hover)', border: '1px solid var(--border)' }}>
+                                <i className={`fa-solid ${typeIcon}`} style={{ color: 'var(--primary)' }}></i>
+                                {typeLabel}
+                              </span>
+                            </td>
+                            <td style={{ fontWeight: '600', maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>
+                              {item.name}
+                            </td>
+                            <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                              {new Date(item.deletedAt).toLocaleString('th-TH')}
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                <button type="button" className="btn btn-sm btn-success-light" onClick={() => restoreTrashItem(item)}>
+                                  <i className="fa-solid fa-rotate-left"></i> กู้คืน
+                                </button>
+                                <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteTrashItemPermanently(item.id)}>
+                                  <i className="fa-solid fa-trash-can"></i> ทิ้งให้สิ้นซาก
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            
+            <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+              <div>
+                {trashItems.length > 0 && (
+                  <button type="button" className="btn btn-danger" onClick={emptyTrash}>
+                    <i className="fa-solid fa-dumpster"></i> ล้างถังขยะทั้งหมด
+                  </button>
+                )}
+              </div>
+              <button type="button" className="btn" onClick={() => setShowTrashModal(false)}>ปิดหน้าต่าง</button>
+            </div>
+          </div>
         </div>
       )}
 

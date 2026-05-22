@@ -474,6 +474,25 @@ body {
   border-color: #e11d48;
 }
 
+.btn-success-light {
+  background-color: var(--success-light);
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+.btn-success-light:hover {
+  background-color: var(--success);
+  color: #ffffff;
+  border-color: var(--success);
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+
 .form-group {
   display: flex;
   flex-direction: column;
