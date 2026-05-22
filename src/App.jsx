@@ -359,7 +359,13 @@ export default function App() {
   
   
   // Dashboard & Target States
-  const [totalTarget, setTotalTarget] = useState(() => Number(localStorage.getItem('tmk_total_target')) || 1001580);
+  const [totalTarget, setTotalTarget] = useState(() => {
+  const stored = Number(localStorage.getItem('tmk_total_target'));
+  if (stored && stored > 0) return stored;
+  // Default to sum of initial channel actual sales
+  const defaultSum = initialChannels.reduce((sum, ch) => sum + (Number(ch.actual) || 0), 0);
+  return defaultSum;
+});
   const [totalUnitsTarget, setTotalUnitsTarget] = useState(() => Number(localStorage.getItem('tmk_total_units')) || 3850);
   const [isEditingTargets, setIsEditingTargets] = useState(false);
 
