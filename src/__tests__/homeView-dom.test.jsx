@@ -28,6 +28,9 @@ vi.mock('../lib/supabaseClient.js', () => ({
       return q;
     },
   },
+  // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
 }));
 vi.mock('../lib/saleRealtime.js', () => ({ useSaleRealtime: () => {} }));
 vi.mock('../lib/useSaleLive.js', () => ({ useSaleLiveReload: () => {} }));
@@ -158,6 +161,7 @@ describe('หน้าแรก · ขอบเดือน', () => {
 describe('หน้าแรก · เตือนเป้า', () => {
   it('อ่านเป้าไม่ได้ (error) → ต้องไม่เตือนว่า "ยังไม่ได้ตั้งเป้าเดือน"', async () => {
     vi.resetModules();
+    remockData();
     vi.doMock('../lib/targets.js', async (orig) => ({
       ...(await orig()),
       fetchTargets: async () => [],
@@ -176,6 +180,7 @@ describe('หน้าแรก · เตือนเป้า', () => {
 describe('หน้าแรก · ทนต่อ query เสริมที่พัง', () => {
   it('อ่านวันตัดรอบคอมไม่ได้ (tmk_settings พัง) → ยอดวันนี้ยังขึ้นปกติ', async () => {
     vi.resetModules();
+    remockData();
     vi.doMock('../lib/supabaseClient.js', () => ({
       supabase: {
         from: (table) => {
@@ -188,7 +193,10 @@ describe('หน้าแรก · ทนต่อ query เสริมที�
           return q;
         },
       },
-    }));
+      // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
+}));
     const { HomeView: HV } = await import('../homeView.jsx');
     render(<HV go={() => {}} />);
     await waitFor(() => expect(screen.getByText('ยอดวันนี้')).toBeInTheDocument(), WF);
@@ -218,9 +226,31 @@ function deferredMergedMonth(firstDays, laterDays) {
   };
 }
 
+/* ⚠️ vi.resetModules() ล้าง registry → mock ระดับบนสุดของ saleData/supabaseClient ไม่ติดกับโมดูลที่ import ใหม่
+   ผลคือเทสไปเรียก "ตัวจริง" ซึ่งยิงเน็ตจริงด้วย credential ใน .env ของเครื่องนั้น
+   → เครื่อง dev เขียว (มี .env) แต่ CI แดง (ไม่มี) · และเทสก็ไม่ hermetic ด้วย
+   ทุกบล็อกที่ resetModules ต้องเรียกตัวนี้ต่อทันที (เจอตอน CI แดง 9 ก.ย. 69) */
+const remockData = () => {
+  vi.doMock('../lib/supabaseClient.js', () => ({
+    supabase: { from: () => ({ select: () => ({ gte: () => ({ lte: async () => ({ data: [], error: null }) }), eq: async () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }) }) }) },
+    isSupabaseConfigured: true,
+  }));
+  vi.doMock('../lib/saleData.js', async (orig) => ({
+    ...(await orig()),
+    cachedFetchRange: async () => ({ data: [], error: null }),
+    cachedFetchAll: async () => ({ data: [], error: null }),
+  }));
+  vi.doMock('../lib/targets.js', async (orig) => ({
+    ...(await orig()),
+    fetchTargets: async () => TARGET_ROWS,
+    fetchTargetsResult: async () => ({ rows: TARGET_ROWS, error: null }),
+  }));
+};
+
 describe('หน้าแรก · reload ซ้อนกัน', () => {
   it('ตอบช้ารอบแรกมาทีหลัง ต้องไม่ทับผลรอบล่าสุด', async () => {
     vi.resetModules();
+    remockData();
     const d = deferredMergedMonth([{ day: DAY, sales: 111111, orders: 1 }], [{ day: DAY, sales: 999999, orders: 1 }]);
     vi.doMock('../lib/mergedMonth.js', () => d.mod);
     let reload = null;
@@ -246,6 +276,7 @@ describe('หน้าแรก · reload ซ้อนกัน', () => {
 describe('หน้าแรก · รอบที่ล้มเหลวมาทีหลัง', () => {
   it('โหลดรอบแรกพัง ต้องไม่ลบยอดที่รอบสองโหลดมาได้แล้ว', async () => {
     vi.resetModules();
+    remockData();
     const d = deferredMergedMonth([], [{ day: DAY, sales: 777777, orders: 1 }]);
     vi.doMock('../lib/mergedMonth.js', () => d.mod);
     let reload = null;
@@ -271,6 +302,7 @@ describe('หน้าแรก · รอบที่ล้มเหลวมา
 describe('หน้าแรก · อ่านยอดไม่สำเร็จ', () => {
   it('อ่านยอดเดือนไม่ได้ → ต้องเตือน ไม่ใช่โชว์ ฿0 เฉย ๆ', async () => {
     vi.resetModules();
+    remockData();
     vi.doMock('../lib/mergedMonth.js', () => ({
       isMergedMonth: () => true,
       fetchMergedMonth: async () => null,        // null = อ่านไม่ได้
@@ -286,6 +318,7 @@ describe('หน้าแรก · อ่านยอดไม่สำเร็
 
   it('อ่านได้แต่ยอดเป็น 0 จริง ๆ → โชว์ ฿0 ได้ ไม่ต้องเตือน', async () => {
     vi.resetModules();
+    remockData();
     vi.doMock('../lib/mergedMonth.js', () => ({
       isMergedMonth: () => true,
       fetchMergedMonth: async () => ({ sales: 0, orders: 0, ad: 0, channels: [], days: [] }),
@@ -310,6 +343,7 @@ describe('หน้าแรก · อ่านยอดไม่สำเร็
 describe('หน้าแรก · ออเดอร์อ่านไม่ได้แต่ยอดเดือนมาจาก cache', () => {
   it('อันดับเซลล์ว่างทั้งกระดาน = ต้องมีแถบเตือน ไม่ใช่โชว์เป็นข้อเท็จจริง', async () => {
     vi.resetModules();
+    remockData();
     // mergedMonth สำเร็จ (เหมือนได้จาก cache) แต่ query ออเดอร์พัง
     vi.doMock('../lib/mergedMonth.js', () => ({
       isMergedMonth: () => true,
@@ -337,6 +371,7 @@ describe('หน้าแรก · ออเดอร์อ่านไม่ไ
 describe('หน้าแรก · ยอดขาดของบางส่วน', () => {
   const mockMM = (extra) => {
     vi.resetModules();
+    remockData();
     vi.doMock('../lib/mergedMonth.js', () => ({
       isMergedMonth: () => true,
       fetchMergedMonth: async () => ({ sales: 900000, orders: 30, ad: 0, channels: [], days: [], ...extra }),

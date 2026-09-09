@@ -45,7 +45,12 @@ const okQuery = (data = []) => {
   };
   return q;
 };
-vi.mock('../lib/supabaseClient.js', () => ({ supabase: { from: () => okQuery(), rpc: async () => ({ data: [], error: null }) } }));
+vi.mock('../lib/supabaseClient.js', () => ({
+  supabase: { from: () => okQuery(), rpc: async () => ({ data: [], error: null }) },
+  // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
+}));
 vi.mock('../lib/saleRealtime.js', () => ({ useSaleRealtime: () => {} }));
 vi.mock('../lib/useSaleLive.js', () => ({ useSaleLiveReload: () => {} }));
 vi.mock('../lib/audit.js', () => ({ logAudit: async () => {} }));

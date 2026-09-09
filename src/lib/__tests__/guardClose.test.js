@@ -18,7 +18,12 @@ vi.mock('../appBus.js', () => ({
   patchRows: vi.fn(),
 }));
 // ตัดของหนักที่ modals-core ลากมา (supabase/audit/UI) ออกจากเทสต์
-vi.mock('../supabaseClient.js', () => ({ supabase: {} }));
+vi.mock('../supabaseClient.js', () => ({
+  supabase: {},
+  // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
+}));
 vi.mock('../audit.js', () => ({ logAudit: vi.fn() }));
 
 const { guardClose, confirmDiscard, DISCARD_MSG } = await import('../../modals-core.jsx');

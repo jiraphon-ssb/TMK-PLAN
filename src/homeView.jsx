@@ -24,7 +24,13 @@ import { DEFAULT_CUTOFF_DAY, normCutoffDay, currentCycleEndMonth } from './lib/c
 import { fetchTargets, fetchTargetsResult } from './lib/targets.js';
 import { cachedFetchRange, cachedFetchAll, ORDERS_SEL, SKUS_SEL, OVERRIDES_SEL, FUNNEL_SEL, strayOverrideOrderNos, fetchOrdersByNos, dedupeOrders } from './lib/saleData.js';
 import { mergeOrderOverrides } from './lib/saleOverrides.js';
-import { supabase } from './lib/supabaseClient.js';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient.js';
+
+/* env ขาด (VITE_SUPABASE_*) → supabase = null → supabase.from() โยน TypeError
+   ทำให้ทั้งบล็อกตกเข้า catch แล้วหน้าแรกกลายเป็น "อ่านยอดขายไม่สำเร็จ" แบบไม่มีสาเหตุให้สืบ
+   (เจอตอน CI แดง 9 ก.ย. 69 — CI ไม่มี .env = สภาพเดียวกับ deploy ที่ตั้ง env ไม่ครบ)
+   คืนรูปแบบ { data, error } เดียวกับ supabase-js → โค้ดข้างล่างไม่ต้องแก้อะไรเลย */
+const NO_DB = { data: null, error: { message: 'ยังไม่ได้ตั้งค่าการเชื่อมต่อฐานข้อมูล', code: 'NO_SUPABASE_CONFIG' } };
 import { useSaleLiveReload } from './lib/useSaleLive.js';
 import {
   dailySeries, todayPulse, sellerRank, buildTodos, missingFunnelYesterday, countNoSeller, homeMoneyVisibility,
@@ -77,6 +83,7 @@ const yesterdayISO = () => { const y = new Date(); y.setDate(y.getDate() - 1); r
    คืน null เมื่ออ่านไม่ได้เลย = ไม่รู้ ก็ไม่เตือน (ดีกว่าเตือนมั่ว) */
 async function cycleEndMonthSafe(fallbackYm) {
   try {
+    if (!isSupabaseConfigured) return null;   // ไม่รู้วันตัดรอบ = ไม่เตือน (ดีกว่าเตือนมั่ว)
     const r = await supabase.from('tmk_settings').select('commission_cutoff_day').eq('id', 'main').maybeSingle();
     const day = (!r?.error && r?.data?.commission_cutoff_day != null)
       ? normCutoffDay(r.data.commission_cutoff_day) : DEFAULT_CUTOFF_DAY;
@@ -110,8 +117,8 @@ function useHomeMoney(ym) {
       const [oR, skR, fR, rcR, tg, ovR, mm, mmPrev, tgPrev] = await Promise.all([
         cachedFetchRange('tmk_mp_orders', ORDERS_SEL, from, to, 'order_date', force),
         cachedFetchRange('tmk_mp_skus', SKUS_SEL, from, to, 'order_date', force),
-        supabase.from('tmk_sales_funnel').select(FUNNEL_SEL).gte('date', funnelFrom).lte('date', to),
-        supabase.from('tmk_sale_receipts').select('order_no,salesperson,sales,status').eq('order_month', ym),
+        isSupabaseConfigured ? supabase.from('tmk_sales_funnel').select(FUNNEL_SEL).gte('date', funnelFrom).lte('date', to) : NO_DB,
+        isSupabaseConfigured ? supabase.from('tmk_sale_receipts').select('order_no,salesperson,sales,status').eq('order_month', ym) : NO_DB,
         fetchTargetsResult(ym),
         cachedFetchAll('tmk_order_overrides', OVERRIDES_SEL),
         fetchMergedMonth(ym),

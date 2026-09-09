@@ -29,7 +29,10 @@ describe('เป้าเดือน: โหลดพลาดต้องล�
     vi.resetModules();
     vi.doMock('../lib/supabaseClient.js', () => ({
       supabase: { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: null, error: { message: 'network down', code: 'PGRST000' } }) }) }) }) }) }) },
-    }));
+      // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
+}));
     vi.doMock('../lib/appBus.js', () => ({ toast: () => {}, canEdit: () => true, isAdmin: () => true, userEmail: () => '', refresh: () => {} }));
     vi.doMock('../lib/audit.js', () => ({ logAudit: () => {} }));
     const { MonthTargetsZone } = await import('../settingsMonthTargets.jsx');

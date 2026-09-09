@@ -24,6 +24,9 @@ vi.mock('../supabaseClient.js', () => ({
       return q;
     },
   },
+  // ต้องมีคู่กับ supabase เสมอ — saleData ใช้ตัวนี้ตัดสินว่า "ตั้งค่าฐานข้อมูลแล้วหรือยัง"
+  // ถ้าลืม เทสจะไปผูกกับว่าเครื่องนั้นมีไฟล์ .env หรือเปล่า (CI ไม่มี = แดง)
+  isSupabaseConfigured: true,
 }));
 vi.mock('../saleData.js', async (orig) => ({
   ...(await orig()),

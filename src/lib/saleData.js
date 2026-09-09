@@ -4,7 +4,7 @@
    - โหลดเฉพาะ "หน้าต่างเวลา" ที่กำลังดู (server-side filter) → เข้าหน้าแรกไว
    - แคชข้ามหน้า: ครั้งแรกโหลดจริง ครั้งต่อไปใช้ของในแคช (สลับหน้าทันที)
    ============================================================ */
-import { supabase } from './supabaseClient.js';
+import { supabase, isSupabaseConfigured } from './supabaseClient.js';
 import { markSaleWrite } from './saleRealtime.js';
 import { rtDiag } from '../realtime/diagnostics.js';
 // resolveJobType = สูตร canonical ร่วมกับ edge (daily-sale-report) → import จาก _shared แหล่งเดียว (P2-4)
@@ -79,7 +79,18 @@ async function paginate(buildQuery) {
 }
 
 // รัน select แบบ paginate + ถ้าพังเพราะคอลัมน์ยังไม่ migrate → ตัดคอลัมน์นั้นออกแล้วลองใหม่ (วนจนกว่าจะผ่าน/ไม่ใช่ error คอลัมน์)
+/* ⛔ env ขาด (VITE_SUPABASE_*) → supabase = null → เดิม supabase.from() โยน TypeError
+   ทำให้หน้าแรกจอขาวแทนที่จะขึ้นแถบ "อ่านยอดขายไม่สำเร็จ" ที่ทำไว้แล้ว
+   (supabaseClient.js เขียนไว้ว่า "ไม่ throw กันแอปทั้งตัวล่ม" — แต่จริง ๆ มัน throw)
+   คืน error รูปแบบเดียวกับที่ผู้เรียกจัดการอยู่แล้ว = ทุกหน้าขึ้นแถบเตือนเองอัตโนมัติ
+   เจอตอน CI แดง 9 ก.ย. 69 (CI ไม่มี .env → ตรงกับกรณี deploy ที่ตั้ง env ไม่ครบ) */
+const NO_DB = () => ({
+  data: null,
+  error: { message: 'ยังไม่ได้ตั้งค่าการเชื่อมต่อฐานข้อมูล (VITE_SUPABASE_URL / KEY)', code: 'NO_SUPABASE_CONFIG' },
+});
+
 async function selectAll(table, sel, addFilters) {
+  if (!isSupabaseConfigured) return NO_DB();
   const build = (s) => () => addFilters(supabase.from(table).select(s));
   let s = sel;
   let r = await paginate(build(s));
@@ -135,6 +146,7 @@ export async function getDateBounds(table = 'tmk_mp_orders', dateCol = 'order_da
   const key = `__bounds|${table}`;
   const hit = cache.get(key);
   if (!force && hit && (Date.now() - hit.ts) < TTL) return hit.data;
+  if (!isSupabaseConfigured) return { min: null, max: null };   // env ขาด = ไม่รู้ขอบวันที่ (ไม่ throw)
   const lo = await supabase.from(table).select(dateCol).not(dateCol, 'is', null).order(dateCol, { ascending: true }).limit(1);
   const hi = await supabase.from(table).select(dateCol).not(dateCol, 'is', null).order(dateCol, { ascending: false }).limit(1);
   const b = { min: lo.data?.[0]?.[dateCol] || null, max: hi.data?.[0]?.[dateCol] || null };
@@ -266,7 +278,7 @@ export function dedupeOrders(rows) {
 
 /** ดึงออเดอร์ตาม order_no (ใช้กับ stray ด้านบน) — คืน [] ถ้าไม่มีอะไรต้องดึง */
 export async function fetchOrdersByNos(table, sel, nos) {
-  if (!nos || !nos.length) return [];
+  if (!nos || !nos.length || !isSupabaseConfigured) return [];
   const out = [];
   for (let i = 0; i < nos.length; i += 150) {
     const r = await supabase.from(table).select(sel).in('order_no', nos.slice(i, i + 150));
