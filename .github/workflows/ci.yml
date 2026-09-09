@@ -52,8 +52,16 @@ jobs:
       #    ⚠️ ข้อจำกัด: CI เทียบกับ "ของที่ deploy จริง" ไม่ได้ (dist-edge/ อยู่ใน .gitignore
       #       และ index.ts มักมีของแก้ค้างในเครื่อง) → gate นี้จับได้แค่ "บันเดิลพัง/สูตรหาย"
       #       ส่วน "ลืม paste ลง Dashboard" ยังต้องอาศัยวินัยคน — จดไว้ที่ CLAUDE.md
+      #    ⚠️ ข้อจำกัดที่สอง (เจอ 9 ก.ย. 69): index.ts "ตัวจริง" เป็นไฟล์งานของ user
+      #       ที่ห้าม commit (กติกาใน CLAUDE.md) → เวอร์ชันใน repo เป็นของเก่าที่ยังไม่ได้
+      #       import _shared — ถ้าบังคับรันด่านนี้ CI จะแดงตลอดกาลโดยไม่มีใครแก้ได้
+      #       จึงข้ามพร้อมประกาศเมื่อไฟล์ใน repo ไม่ใช่เวอร์ชัน _shared · ด่านเต็มยังรันในเครื่อง dev
       - name: Edge bundle build ได้ + มีสูตรครบ
         run: |
+          if ! grep -q '_shared/saleFormulas.js' supabase/functions/daily-sale-report/index.ts; then
+            echo "::notice::ข้ามด่าน edge bundle — index.ts ใน repo เป็นเวอร์ชันเก่า (ตัวจริงอยู่เครื่อง dev · ห้าม commit ตามกติกา CLAUDE.md) · ด่านเต็มรันด้วย npm run build:edge ในเครื่อง"
+            exit 0
+          fi
           npm run build:edge
           node -e "
             const fs = require('fs');
