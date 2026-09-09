@@ -39,7 +39,6 @@ const QUERIES = {
   tasks:       () => supabase.from('tmk_tasks').select('*').is('deleted_at', null).order('date'),
   brands:      () => supabase.from('tmk_brands').select('*').is('deleted_at', null).order('sort_order'),
   flows:       () => supabase.from('tmk_flows').select('*').is('deleted_at', null).order('sort_order'),
-  products:    () => supabase.from('tmk_products').select('id,name,price,actual_units,stock_on_hand,reorder_point,strategy,image_url,category,supplier,sku,barcode,lots,reservations').is('deleted_at', null).order('created_at'),
   audit:       () => supabase.from('tmk_audit_logs').select('id,user_email,action,details,created_at,flow_id,entity_type,entity_id,severity').order('created_at', { ascending: false }).limit(ROW_LIMITS.audit),
   roles:       () => supabase.from('tmk_user_roles').select('*').is('deleted_at', null),
   staff:       () => supabase.from('tmk_staff').select('*').is('deleted_at', null).order('joined_at'),
@@ -47,30 +46,28 @@ const QUERIES = {
   // จำกัด DAILY_WINDOW_MONTHS เดือนล่าสุด — เดือนเก่ากว่านั้น computeMonth fallback ไป tmk_monthly_history.actual
   daily:       () => supabase.from('tmk_daily_sales').select('date,day_name,channels,ad_spend,avg_reply_minutes,note,deleted_at,shopee,tiktok,lazada,facebook,line_oa,crm').gte('date', dailyFromDate()).order('date'),
   adCamps:     () => supabase.from('tmk_ad_campaigns').select('*').is('deleted_at', null).order('start_date'),
-  segments:    () => supabase.from('tmk_customer_segments').select('*').is('deleted_at', null).order('sort_order'),
-  fbMetrics:   () => supabase.from('tmk_fb_metrics').select('*').eq('id', 'current').maybeSingle(),
+  // PART 109 (ลด egress): เลิกโหลดตารางที่ไม่มีหน้าไหนใช้แล้ว — ไม่มี consumer เหลือใน src/
+  //   segments (กลุ่มลูกค้า · ตัดทิ้งตาม D12) · fbMetrics (D16) · colorMix/sizeMix (หน้าที่ใช้ถูกลบไปแล้ว)
+  //   mapToTMK null-safe อยู่แล้ว (raw.X || []) → ไม่ต้องแก้ที่อื่น · ถ้าจะใช้อีกให้เพิ่ม query กลับมาที่นี่
   monthly:     () => supabase.from('tmk_monthly_history').select('*').order('year').order('month'),
-  colorMix:    () => supabase.from('tmk_color_mix').select('*').order('sort_order'),
-  sizeMix:     () => supabase.from('tmk_size_mix').select('*').order('sort_order'),
-  // จำกัด ROW_LIMITS.customers รายล่าสุด (คอมเมนต์เดิมเขียน 300 ไม่ตรงโค้ด) — ค้นหาฝั่ง server ในหน้า CustomersView ครอบคลุมลูกค้านอกชุดนี้
-  customers:   () => supabase.from('tmk_customers').select('*').order('created_at', { ascending: false }).limit(ROW_LIMITS.customers),
-  orders:      () => supabase.from('tmk_orders').select('id,code,customer_id,customer_name,items,subtotal,discount,total,status,channel,tracking_no,carrier,note,status_log,created_at').order('created_at', { ascending: false }).limit(ROW_LIMITS.orders),
-  customerTotals: () => supabase.from('tmk_customer_totals').select('customer_id,order_count,total_spent'),
+  /* PART 116 — เลิกโหลด tmk_products / tmk_customers / tmk_orders ตอนเปิดแอป
+     ทั้ง 3 ตัวเป็น "ระบบสินค้า/ออเดอร์ยุคเก่า" ที่ถอด section ไปแล้ว (PART 35) — ไม่มีหน้าไหนแสดงผลอีก
+     ที่เหลืออ่านมันมีแค่ Spotlight (ย้ายไปค้นตารางจริงตอนพิมพ์แล้ว) และ modal เก่าที่กดไม่ถึงแล้ว
+     mapToTMK null-safe อยู่แล้ว (raw.X || []) → TMK.products/orders/customers = [] ไม่พัง
+     ถ้าจะใช้ใหม่: เพิ่ม query กลับมาที่นี่ + ใส่ชื่อตารางกลับใน channelTables/POLL_TABLES */
   commentCounts: () => supabase.from('tmk_task_comment_counts').select('task_id,comment_count'),
 };
 // ตาราง Supabase → key ใน raw/QUERIES (สำหรับแมป realtime event)
 const TABLE_KEY = {
-  tmk_channels: 'channels', tmk_campaigns: 'campaigns', tmk_tasks: 'tasks', tmk_brands: 'brands', tmk_flows: 'flows', tmk_products: 'products',
+  tmk_channels: 'channels', tmk_campaigns: 'campaigns', tmk_tasks: 'tasks', tmk_brands: 'brands', tmk_flows: 'flows',
   tmk_settings: 'settings', tmk_user_roles: 'roles', tmk_staff: 'staff', tmk_duties: 'duties',
-  tmk_daily_sales: 'daily', tmk_ad_campaigns: 'adCamps', tmk_customer_segments: 'segments',
-  tmk_fb_metrics: 'fbMetrics', tmk_monthly_history: 'monthly', tmk_color_mix: 'colorMix',
-  tmk_size_mix: 'sizeMix', tmk_orders: 'orders', tmk_customers: 'customers',
+  tmk_daily_sales: 'daily', tmk_ad_campaigns: 'adCamps', tmk_monthly_history: 'monthly',
+  // (segments / fbMetrics / colorMix / sizeMix เลิกโหลดแล้ว — ไม่ต้อง map ชื่อไว้)
 };
 // ตารางที่กระทบ derived (orderCount/totalSpent) → ต้อง refresh view ด้วย
-const TOTALS_TRIGGERS = new Set(['orders']);
 // ตารางที่ใช้เฉพาะหน้า Sales/แคตตาล็อก — ไม่โหลดตอนเปิดแอป · โหลดเมื่อกดเข้า section (ensureLoaded) · mapToTMK null-safe (raw.X || [])
 // หมายเหตุ: audit ไม่ defer (หน้าหลักโชว์ "อัพเดทล่าสุด") · monthly ไม่ defer (เป็นเป้ายอด)
-const DEFERRED = new Set(['adCamps', 'colorMix', 'sizeMix', 'fbMetrics']);
+const DEFERRED = new Set(['adCamps']);
 
 // โหลดทุกตารางพร้อมกัน (ครั้งแรก) — เรียก QUERIES ทั้งชุด
 async function loadAllTables() {
@@ -78,15 +75,14 @@ async function loadAllTables() {
     throw new Error('Supabase ยังไม่ได้ตั้งค่า (.env)');
   }
 
-  const mainKeys = Object.keys(QUERIES).filter(k => k !== 'customerTotals' && k !== 'commentCounts' && !DEFERRED.has(k));
+  const mainKeys = Object.keys(QUERIES).filter(k => k !== 'commentCounts' && !DEFERRED.has(k));
   const tables = Object.fromEntries(mainKeys.map(k => [k, QUERIES[k]()]));
 
   const keys = Object.keys(tables);
-  // ยิงทุกตารางพร้อมกัน + customerTotals/commentCounts (optional) ในชุดเดียว
-  // เดิม await ต่อคิว 2 ตัวหลัง batch → เพิ่ม 2 round-trip serial ตอนเปิดแอป · รวมเป็นขนานตัดเวลา time-to-data
-  const [results, ctRes, ccRes] = await Promise.all([
+  // ยิงทุกตารางพร้อมกัน + commentCounts (optional) ในชุดเดียว
+  // (customerTotals ถูกตัดออกพร้อม tmk_orders/tmk_customers — PART 116)
+  const [results, ccRes] = await Promise.all([
     Promise.all(Object.values(tables)),
-    QUERIES.customerTotals(),
     QUERIES.commentCounts(),
   ]);
 
@@ -97,8 +93,12 @@ async function loadAllTables() {
     const key = keys[i];
     if (r.error) {
       console.warn(`⚠️ tmk_${key}: ${r.error.message}`);
-      // ตารางใหม่ (โครงการ/แบรนด์) = optional → ยังไม่รัน migration ก็ degrade เงียบ ไม่ขึ้น toast เตือน
-      if (key !== 'brands' && key !== 'flows') failed.push(key);
+      /* ⚠️ เดิมยกเว้น flows/brands ทั้งหมด (เผื่อยังไม่ migrate) → อ่านพลาดจริงก็เงียบ
+         ผลคือ TMK.flows = [] → sidebar เหลือ "งานทั่วไป" → App เห็นว่า activeFlow ไม่อยู่ในลิสต์
+         → เขียนทับ localStorage['tmk-flow'] → โครงการที่เปิดค้างไว้หายถาวร และงานที่สร้างตอนนั้นลงผิดโครงการ
+         แยกให้ถูก: "ตารางยังไม่มี" (42P01) = เงียบได้ · error อื่น (เน็ต/RLS/5xx) = ต้องแจ้ง */
+      const tableMissing = r.error.code === '42P01' || /does not exist|relation .* does not exist/i.test(r.error.message || '');
+      if (!((key === 'brands' || key === 'flows') && tableMissing)) failed.push(key);
       result[key] = Array.isArray(r.data) ? [] : null;
     } else {
       result[key] = r.data;
@@ -106,9 +106,6 @@ async function loadAllTables() {
   });
   if (failed.length) result.__errors = failed; // ส่งต่อให้ load() แจ้งผู้ใช้ (กันตารางพังดูเหมือน "ไม่มีข้อมูล")
 
-  // ยอดสะสมต่อลูกค้าจาก view (รวมทุกออเดอร์ ไม่ติด limit) — optional · ยิงขนานมาแล้วข้างบน
-  // ถ้ายัง migration ไม่รันก็เงียบ (ไม่เข้า __errors) และ mapToTMK fallback ไปรวมจาก orders ที่โหลดมา
-  if (!ctRes.error && Array.isArray(ctRes.data)) result.customerTotals = ctRes.data;
   // จำนวนคอมเมนต์ต่อ task (ป้าย 💬 บนการ์ด) — optional · ก่อนรัน migration view = เงียบ
   if (!ccRes.error && Array.isArray(ccRes.data)) result.commentCounts = ccRes.data;
 
@@ -180,7 +177,6 @@ export function DataProvider({ children }) {
         channels: TMK.channels.length,
         campaigns: TMK.campaigns.length,
         tasks: TMK.tasks.length,
-        products: TMK.products.length,
         daily: TMK.dailyMonth.length,
         target: TMK.consts.TARGET,
         MTD: TMK.computed.MTD,
@@ -211,13 +207,19 @@ export function DataProvider({ children }) {
     try {
       const results = await Promise.all(keys.map(k => QUERIES[k]()));
       if (!mountedRef.current) return;
+      /* ⚠️ error ที่นี่เคยถูกข้ามเงียบทั้งหมด — pendingTables ถูกเคลียร์ไปก่อนยิง query แล้ว
+         → event realtime ของตารางนั้นหายไปเลย หน้าจอค้างเลขเก่าโดยไม่มีสัญญาณ
+           และจะไม่อัปเดตอีกจนกว่าจะมี event ตัวถัดไปของตารางเดียวกัน (โหมด realtime ไม่มี poll)
+         ตอนนี้: คิวตารางที่ล้มกลับเข้า pending เพื่อให้รอบถัดไปลองใหม่ + แจ้งผู้ใช้ */
+      const refetchFailed = [];
       results.forEach((r, i) => {
         if (!r.error) { rawRef.current[keys[i]] = r.data; rtDiag.refetch(keys[i], r.data?.length || 0); } // Phase 0 baseline: นับ per-table refetch + rows (dev-only)
+        else { refetchFailed.push(keys[i]); console.warn(`⚠️ refresh tmk_${keys[i]}: ${r.error.message}`); }
       });
-      // ถ้าตารางที่เปลี่ยนกระทบ derived view (เช่น orders → tmk_customer_totals) → refresh view ด้วย
-      if (keys.some(k => TOTALS_TRIGGERS.has(k))) {
-        const ct = await QUERIES.customerTotals();
-        if (!ct.error && Array.isArray(ct.data)) rawRef.current.customerTotals = ct.data;
+      if (refetchFailed.length) {
+        const nameOf = Object.fromEntries(Object.entries(TABLE_KEY).map(([t, k]) => [k, t]));
+        refetchFailed.forEach(k => { const t = nameOf[k]; if (t) pendingTablesRef.current.add(t); });
+        toast(`อัปเดตข้อมูลบางส่วนไม่สำเร็จ (${refetchFailed.join(', ')}) — ตัวเลขบนจออาจยังเป็นของเก่า`, 'warn');
       }
       if (needCounts) {
         const cc = await QUERIES.commentCounts();
@@ -318,7 +320,7 @@ export function DataProvider({ children }) {
       retryRealtime();
     };
     // ตารางที่เปลี่ยนบ่อยระหว่างทำงาน — poll fallback ดึงเฉพาะกลุ่มนี้ (ลด egress; ตารางตั้งค่าที่นิ่งจะรีเฟรชตอนสลับแท็บ/โหลดใหม่)
-    const POLL_TABLES = ['tmk_daily_sales', 'tmk_orders', 'tmk_customers', 'tmk_tasks', 'tmk_products', 'tmk_channels', 'tmk_campaigns', 'tmk_ad_campaigns', 'tmk_flows', 'tmk_task_comments'];
+    const POLL_TABLES = ['tmk_daily_sales', 'tmk_tasks', 'tmk_channels', 'tmk_campaigns', 'tmk_ad_campaigns', 'tmk_flows', 'tmk_task_comments'];
     const startPolling = () => {
       if (usingPoll || !mountedRef.current) return;
       usingPoll = true;
@@ -329,11 +331,12 @@ export function DataProvider({ children }) {
     };
     const pendingTables = new Set(); // ตารางที่เปลี่ยน — flush ทีเดียวด้วย refreshTables
     const channelTables = [
-      'tmk_channels','tmk_campaigns','tmk_tasks','tmk_brands','tmk_flows','tmk_products','tmk_settings',
+      'tmk_channels','tmk_campaigns','tmk_tasks','tmk_brands','tmk_flows','tmk_settings',
       'tmk_user_roles','tmk_staff','tmk_duties','tmk_daily_sales','tmk_ad_campaigns',
-      'tmk_customer_segments','tmk_fb_metrics','tmk_monthly_history',
-      'tmk_color_mix','tmk_size_mix',
-      'tmk_orders','tmk_customers', // บอร์ดออเดอร์/ลูกค้าอัปเดตสดข้ามอุปกรณ์
+      /* เอา 4 ตารางที่เลิกโหลดออกจาก realtime ด้วย (segments/fb_metrics/color_mix/size_mix)
+         ถ้าปล่อยไว้: มี event มา → refreshTables หา key ไม่เจอ → ตกไปที่ load() = โหลดใหม่ "ทั้งแอป"
+         ซึ่งตรงข้ามกับที่ตั้งใจลด egress */
+      'tmk_monthly_history',
       'tmk_task_comments', // เปลี่ยน → รีเฟรชจำนวน 💬 บนการ์ด (needCounts ใน refreshTables · ไม่ full load)
       // ไม่ subscribe tmk_audit_logs — การเขียน log ไม่ควร trigger reload เต็ม (ลด reload ซ้ำตอนเซฟ)
     ];

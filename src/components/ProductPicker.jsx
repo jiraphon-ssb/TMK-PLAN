@@ -89,8 +89,11 @@ export function ProvinceCombobox({ value, onChange, placeholder = 'เลือ�
 }
 
 /* ---------- เลือกลาย (Command + Popover จาก GOLDEN_DESIGNS) ---------- */
-export function DesignCombobox({ value, code, onPick, placeholder = 'พิมพ์/เลือกชื่อลาย เช่น ราษฎร์ภักดี' }) {
+/* items = ลิสต์ลายที่จะให้เลือก [{code,name,type,colors,sizes}] — ไม่ส่งมา = GOLDEN_DESIGNS (ออเดอร์/ใบเสร็จใช้แบบเดิม)
+   หน้าสต็อก/ใบสั่งผลิตส่งแคตตาล็อกสด (tmk_shirt_catalog merge GOLDEN) เข้ามา → เลือกได้ทุกลายที่มีในหน้า "สินค้า" */
+export function DesignCombobox({ value, code, onPick, items = GOLDEN_DESIGNS, placeholder = 'พิมพ์/เลือกชื่อลาย เช่น ราษฎร์ภักดี' }) {
   const [open, setOpen] = useState(false);
+  const list = items && items.length ? items : GOLDEN_DESIGNS;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -106,17 +109,17 @@ export function DesignCombobox({ value, code, onPick, placeholder = 'พิม�
           <CommandList>
             <CommandEmpty>ไม่พบลายที่ตรงกัน</CommandEmpty>
             <CommandGroup>
-              {GOLDEN_DESIGNS.map(d => {
+              {list.map(d => {
                 const sel = d.name === value;
                 return (
-                  <CommandItem key={d.code + d.name} value={`${d.name} ${d.code} ${d.type}`}
+                  <CommandItem key={(d.code || "") + d.name} value={`${d.name} ${d.code} ${d.type}`}
                     onSelect={() => { onPick({ name: d.name, code: d.code, design: d }); setOpen(false); }}>
                     <span className="row between w-full" style={{ gap: 8, minWidth: 0 }}>
                       <span className="row" style={{ gap: 8, minWidth: 0, alignItems: 'center' }}>
                         <span style={{ width: 16, color: 'var(--accent)', flex: 'none' }}>{sel && <Icon name="check" />}</span>
                         <span className="truncate" style={{ fontWeight: sel ? 600 : 400 }}>{d.name}</span>
                       </span>
-                      <span className="cap flex-none" style={{ color: 'var(--ink-4)' }}>{d.code} · {d.type}</span>
+                      <span className="cap flex-none" style={{ color: 'var(--ink-4)' }}>{[d.code, d.type].filter(Boolean).join(' · ')}</span>
                     </span>
                   </CommandItem>
                 );

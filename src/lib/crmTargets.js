@@ -16,24 +16,40 @@ export const crmNoteId = (salesperson, dateISO) => `${salesperson}::${dateISO}`;
 export async function fetchCrmTargets(month) {
   if (!month) return [];
   try {
-    const { data, error } = await supabase
+    // PART 110: เป้าเชิงกิจกรรม (calls_target/answer_rate_target) — graceful ถ้ายังไม่ได้รัน migration
+    let { data, error } = await supabase
       .from('tmk_crm_targets')
-      .select('id,salesperson,month,sales_target')
+      .select('id,salesperson,month,sales_target,calls_target,answer_rate_target')
       .eq('month', month);
-    if (error) return [];
+    if (error && /calls_target|answer_rate_target|column|schema cache/i.test(error.message || '')) {
+      ({ data, error } = await supabase.from('tmk_crm_targets').select('id,salesperson,month,sales_target').eq('month', month));
+    }
+    /* ⚠️ อ่านไม่ได้ ≠ ไม่มีทีม CRM — คืน [] ทั้งสองกรณีทำให้ crmTeamOf() ได้ Set ว่าง
+       → ยอด CRM ของทั้งทีมหายจากรายงาน · CrmTeamStrip ว่าง · activity นับโน้ตของทุกคน (fallback)
+       ทั้งหมดนี้เงียบสนิท · ติดธง __readError ให้ผู้เรียกแยกออกจาก "ยังไม่ตั้งเป้า" ได้ */
+    if (error) { const e = []; e.__readError = error.message || 'อ่านเป้า CRM ไม่สำเร็จ'; return e; }
     return data || [];
-  } catch { return []; }
+  } catch (e) { const r = []; r.__readError = e?.message || 'อ่านเป้า CRM ไม่สำเร็จ'; return r; }
 }
 
 /** upsert เป้า CRM 1 แถว — คืน result ให้ caller เช็ค error (relation-missing → toast บอกรัน migration) */
-export async function saveCrmTarget({ salesperson, month, sales_target = 0 }) {
-  const row = {
+export async function saveCrmTarget({ salesperson, month, sales_target = 0, calls_target = null, answer_rate_target = null }) {
+  const base = {
     id: crmTargetId(salesperson, month),
     salesperson, month,
     sales_target: Number(sales_target) || 0,
     updated_at: new Date().toISOString(),
   };
-  return supabase.from('tmk_crm_targets').upsert(row, { onConflict: 'id' });
+  // เป้ากิจกรรม — ส่งเฉพาะเมื่อ caller ตั้งค่ามา · คอลัมน์ยังไม่ migrate → ตัดออกแล้ว upsert ใหม่ (ไม่ให้เป้ายอดพังตาม)
+  const row = { ...base };
+  if (calls_target != null) row.calls_target = Number(calls_target) || 0;
+  if (answer_rate_target != null) row.answer_rate_target = Number(answer_rate_target) || 0;
+  let res = await supabase.from('tmk_crm_targets').upsert(row, { onConflict: 'id' });
+  if (res.error && /calls_target|answer_rate_target|column|schema cache/i.test(res.error.message || '')) {
+    res = await supabase.from('tmk_crm_targets').upsert(base, { onConflict: 'id' });
+    if (!res.error) return { ...res, degraded: true };   // บอก caller ว่าเป้ากิจกรรมยังไม่ถูกเก็บ
+  }
+  return res;
 }
 
 /** โน้ตประจำวันทุกเซลล์ของวันเดียว (ใช้ได้ทั้ง scope เดี่ยว/รวมทุกคน) → [] ถ้า error */

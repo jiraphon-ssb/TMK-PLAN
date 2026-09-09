@@ -49,6 +49,15 @@
   --info:   #2563eb;
   --info-soft: #eff6ff;
 
+  /* Gauge zones — สีสำหรับ "โค้งเกจ" โดยเฉพาะ (ZoneGauge)
+     ทำไมไม่ใช้ --good/--warn/--bad ตรงๆ: token พวกนั้นออกแบบมาสำหรับ "ตัวหนังสือ/ชิป"
+     บนพื้นขาว จึงเข้มไว้เพื่อ contrast ≥4.5:1 พอเอามาระบายโค้งหนา 18px แล้ว
+     --warn (#ca8a04) กลายเป็นโทนมัสตาร์ด/โอลีฟขุ่น (บั๊กที่ user เห็น 71%/73%)
+     ชุดนี้จึงสว่าง-สดกว่า เป็นสเปกตรัม แดง→อำพัน→เขียว ที่อ่านเป็นชุดเดียวกัน */
+  --gauge-bad:  #ef4444;
+  --gauge-warn: #f59e0b;
+  --gauge-good: #22c55e;
+
   /* Channel brand colors */
   --ch-shopee:   #ee6a3a;
   --ch-tiktok:   #18a0ab;
@@ -158,6 +167,8 @@
   --warn: #e0a93f; --warn-soft: #2a2113;
   --bad:  #e0697a; --bad-soft: #2a1518;
   --info: #5aa6c9; --info-soft: #11242c;
+  /* เกจในธีมมืด: ลดความจัดลง กันโค้งสีสดแสบตาบนพื้นเข้ม */
+  --gauge-bad: #f0616f; --gauge-warn: #e9a23b; --gauge-good: #4ec98a;
 
   --sh-sm: 0 1px 2px rgba(0,0,0,0.4);
   --sh-md: 0 4px 18px rgba(0,0,0,0.45);
@@ -394,7 +405,10 @@ input, select, textarea { font-family: inherit; }
 .g4 { grid-template-columns: repeat(4, 1fr); }
 /* Kanban โฟลว์ — เลื่อนแนวนอน (desktop): คอลัมน์น้อย=ยืดเต็ม · คอลัมน์เยอะ=คงกว้าง 280px แล้วเลื่อนขวา (ไม่ตัดลงล่าง) */
 /* Kanban โฟลว์ — grid auto-flow column: คอลัมน์น้อย=ยืดเต็ม (1fr · กลาง) · คอลัมน์เยอะ=คง 280px แล้วเลื่อนขวา · grid เป็น definite-width ไม่ดันความกว้างหน้า */
-.planner-kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(280px, 1fr); overflow-x: auto; gap: 14px; align-items: start; scroll-behavior: smooth; padding-bottom: 4px; min-width: 0; max-width: 100%; }
+/* บอร์ด Kanban — flex เพื่อให้คอลัมน์ที่ "พับ" แคบจริง (grid-auto-columns เดิมล็อกความกว้างทุกแทร็ก) */
+.planner-kanban { display: flex; overflow-x: auto; gap: 14px; align-items: flex-start; scroll-behavior: smooth; padding-bottom: 4px; min-width: 0; max-width: 100%; }
+.planner-kanban > * { flex: 1 0 280px; min-width: 280px; }
+.planner-kanban > .kb-col-collapsed { flex: 0 0 48px; min-width: 48px; }
 /* statgrid — กริดสถิติเล็กในการ์ด: คงหลายคอลัมน์บนมือถือ (ไม่ยุบเป็น 1 แถวยาว) */
 .statgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .statgrid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -473,12 +487,24 @@ input, select, textarea { font-family: inherit; }
  
  
 .mp-order-row.is-open td { background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface)); }
+.of-money { display: grid; grid-template-columns: minmax(150px, 1.5fr) 1fr 0.8fr; gap: 12px; align-items: end; }
+.of-money-more { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.of-line-grid { display: grid; grid-template-columns: 1.2fr 1fr 0.7fr 0.9fr; gap: 8px; }
+@media (max-width: 560px) {
+  .of-money { grid-template-columns: 1fr 1fr; }
+  .of-money > :first-child { grid-column: 1 / -1; }
+  .of-money-more { grid-template-columns: 1fr 1fr; }
+  .of-line-grid { grid-template-columns: 1fr 1fr; }
+}
+.order-date-row td { background: var(--surface-2) !important; padding-top: 6px !important; padding-bottom: 6px !important; border-top: 1px solid var(--line); }
+.order-date-row:hover td { background: var(--surface-2) !important; }
 .order-channel-chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; background: var(--surface); font-size: 12px; font-weight: 700; }
 .order-channel-dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
 
 @media (max-width: 820px) { .hero3 { grid-template-columns: 1fr; } }
 /* hero: ซ้ายยอดขายรวม(เด่น+กราฟเทียบเดือน) + ขวา bento ช่องทาง (แคบลง คลีน) */
-.hero-bento { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; align-items: stretch; }
+.hero-bento { display: grid; grid-template-columns: 1.25fr minmax(300px, 0.85fr); gap: 20px; align-items: stretch; }
+.hero-target { min-width: 0; }
 .hero-total { display: flex; flex-direction: column; padding-right: 20px; border-right: 1px solid var(--line); }
 /* กราฟยืดเต็มช่องที่เหลือ → คอนเทนต์ล่างชิดล่างเสมอ ไม่มีช่องว่างลอย (เหมือนกันทั้ง cmp/ทั้งช่วง) */
 .hero-chartwrap { flex: 1 1 auto; min-height: 92px; margin-top: 10px; }
@@ -486,6 +512,7 @@ input, select, textarea { font-family: inherit; }
 .hero-chgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 10px; }
 .ch-card { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); cursor: pointer; transition: border-color .14s var(--ease), box-shadow .14s var(--ease), transform .14s var(--ease); }
 .ch-card:hover { border-color: var(--ink-4); box-shadow: var(--sh-sm); transform: translateY(-1px); }
+.ch-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ch-logo { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 10px; flex: none; }
 .ch-meta { min-width: 0; }
 .ch-name { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -507,6 +534,9 @@ input, select, textarea { font-family: inherit; }
 .fld > span { font-size: var(--fs-cap); color: var(--ink-3); font-weight: 600; }
 .form-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 /* หัวข้อกลุ่มฟิลด์ใน drawer แก้ไขเสื้อ */
+.cat-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: var(--fs-cap); font-weight: 600; line-height: 1.4; cursor: pointer; transition: background .15s, border-color .15s; }
+.cat-chip:hover { border-color: var(--ink-4); }
+.cat-price:hover { border-color: var(--line) !important; background: var(--surface-2) !important; }
 .cat-sec-head { font-size: var(--fs-cap); font-weight: 700; color: var(--ink-3); letter-spacing: .2px; }
 /* ตัวแก้ไขสี/ไซซ์แบบชิป */
 .chip-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
@@ -938,7 +968,9 @@ input, select, textarea { font-family: inherit; }
 }
 @media (max-width: 900px) {
   /* Planner kanban — มือถือคอลัมน์ละ 240px (เลื่อนแนวนอน) */
-  .planner-kanban { gap: 12px; grid-auto-columns: minmax(240px, 1fr); }
+  .planner-kanban { gap: 12px; }
+  .planner-kanban > * { flex-basis: 240px; min-width: 240px; }
+  .planner-kanban > .kb-col-collapsed { flex: 0 0 44px; min-width: 44px; }
 }
 
 /* ============================================================
@@ -998,6 +1030,63 @@ input, select, textarea { font-family: inherit; }
 @media (max-width: 640px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ===== P2: Dashboard KPI hero emphasis ===== */
+.kpi-card { display: flex; flex-direction: column; min-height: 118px; }
+.kpi-val { font-size: 26px; font-weight: 700; line-height: 1.15; margin: 4px 0 6px; letter-spacing: -.3px; }
+.kpi-viz { min-height: 26px; display: flex; flex-direction: column; justify-content: center; }
+.kpi-sub { margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-delta { display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; flex: none; }
+/* ---- CRM blocks (crmBlocks.jsx · รื้อรอบ 2) ---- */
+.crm-hero { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(280px, 1.15fr) minmax(240px, 1fr); gap: 22px; align-items: stretch; }
+.crm-hero.no-team { grid-template-columns: minmax(250px, 1fr) minmax(280px, 1.4fr); }
+.crm-hero > * + * { border-left: 1px solid var(--line); padding-left: 22px; }
+.crm-split { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; align-items: stretch; }
+.lc-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.lc-stage, .contact-card, .rfm-tiles > button { transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
+.lc-stage:not(:disabled):hover, .contact-card:hover, .rfm-tiles > button:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,.07); }
+.rfm-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 1100px) {
+  .crm-hero, .crm-hero.no-team { grid-template-columns: 1fr; }
+  .crm-hero > * + * { border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 16px; }
+  .crm-split { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) { .lc-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); } .rfm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* ตารางอันดับเซลล์ในโหมดการ์ด (มือถือ): ซ่อนแถบสัดส่วน (ไม่มีบริบทเทียบข้ามคนแล้ว) · เก็บ %ของทีม+Δ ไว้บรรทัดเดียว */
+@media (max-width: 700px) {
+  .table-cards .tb-bar { display: none; }
+  .table-cards .tb-share { justify-content: flex-end; }
+}
+.day-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 12px 14px; }
+.ch-close-row { display: grid; grid-template-columns: 104px minmax(24px, 1fr) 92px 106px 56px; gap: 10px; align-items: center; min-width: 0; }
+@media (max-width: 760px) {
+  /* จอแคบ: ชื่อ+ยอด บรรทัดแรก · แถบ+ทัก/ปิด/% บรรทัดสอง (เดิม 5 คอลัมน์ตายตัว ดันจอล้น) */
+  .ch-close-row { grid-template-columns: 1fr auto auto; gap: 6px 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .ch-close-name { grid-column: 1; }
+  .ch-close-sales { grid-column: 2 / -1; }
+  .ch-close-bar { grid-column: 1 / -1; order: 3; }
+  .ch-close-meta { grid-column: 1; order: 4; text-align: left !important; }
+  .ch-close-pct { grid-column: 2 / -1; order: 5; }
+}
+.perf-hero { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 22px; align-items: start; }
+.perf-hero > * + * { border-left: 1px solid var(--line); padding-left: 22px; }
+.perf-hero-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.perf-stat-value { font-size: 21px; font-weight: 800; letter-spacing: -.3px; line-height: 1.15; }
+.perf-stat-label, .perf-stat-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1000px) {
+  .perf-hero { grid-template-columns: 1fr; }
+  .perf-hero > * + * { border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 16px; }
+}
+@media (max-width: 700px) {
+  .kpi3 { grid-template-columns: 1fr; }
+  /* มือถือ: 3 สถิติเป็นแถวรายการ (ป้ายซ้าย · ค่าขวา) — กริด 3 คอลัมน์ตัวเลขทับกัน */
+  .perf-hero-stats { grid-template-columns: 1fr; gap: 0; }
+  .perf-stat { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+  .perf-stat-value { text-align: right; font-size: 18px; }
+  .perf-stat-sub { grid-column: 1 / -1; text-align: left; }
+}
+.kpi8 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1100px) { .kpi8 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .kpi8 { grid-template-columns: 1fr; } }
 .kpi-card-primary { border-left: 3px solid var(--accent); }
 .kpi-card-good { border-left: 3px solid var(--good); }
 .kpi-card-warn { border-left: 3px solid var(--warn); }
@@ -1068,7 +1157,8 @@ input, select, textarea { font-family: inherit; }
 /* ตั้ง duration ชัด — กันปิดกระตุก (animate-out ดีฟอลต์ 150ms จบก่อน useAnimatedClose unmount ที่ 200ms)
    ปิด 190ms (≤200ms delay = ไม่มีช่องว่างค้าง) · เปิด 220ms ให้เนียน */
 .dialog-overlay[data-state="open"], .dialog-content[data-state="open"] { animation-duration: 220ms; }
-.dialog-overlay[data-state="closed"], .dialog-content[data-state="closed"] { animation-duration: 190ms; }
+/* ตรึงสถานะปลายของ exit (opacity 0) — ไม่งั้นพอ animation จบ element เด้งกลับ opacity 1 ก่อน unmount = กระพริบ (BUGFIX 22 ส.ค.) */
+.dialog-overlay[data-state="closed"], .dialog-content[data-state="closed"] { animation-duration: 190ms; animation-fill-mode: forwards; pointer-events: none !important; }
 .dialog-content-lg { max-width: 740px; }
 .dialog-content-xl { max-width: 1040px; }
 .dialog-header { @apply flex flex-col space-y-1.5 text-center sm:text-left mb-4; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
@@ -1093,3 +1183,58 @@ input, select, textarea { font-family: inherit; }
  
 .small { font-size: var(--fs-sm); font-weight: var(--fw-med); line-height: 1.5; }
 
+
+/* PART 103: แถบเป้าเดือนจิ๋วในการ์ดช่องทาง hero (รายงานขาย) */
+.ch-target { margin-top: 6px; display: grid; gap: 3px; }
+.ch-target-bar { display: block; height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.ch-target-bar > span { display: block; height: 100%; border-radius: 999px; transition: width .4s ease; }
+.ch-target-txt { font-size: 10.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* คอลัมน์บอร์ดที่พับไว้ (PART 104) — แถบแนวตั้งแคบ กดเพื่อกาง */
+.kb-col-collapsed { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 6px; min-height: 200px; width: 48px;
+  border: 1.5px dashed var(--line); border-radius: var(--r-lg); background: var(--surface-2); cursor: pointer; }
+.kb-col-collapsed:hover { background: var(--surface-3); }
+.kb-col-vert { writing-mode: vertical-rl; font-size: var(--fs-sm); font-weight: 700; color: var(--ink-2); white-space: nowrap; }
+
+/* ช่องตัวเลข: ซ่อนลูกศร spinner (PART 106) — กดพลาดแล้วยอดเงินเปลี่ยนโดยไม่รู้ตัว · ใช้พิมพ์อย่างเดียว */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+/* ============================================================
+   แถวช่องทางในรายงานขาย (PART 108) — เดิมล็อกความกว้างคอลัมน์เป็น px
+   → จอ 390px กว้างทะลุ 441/596px ตัวเลขหลุดจอ ต้องเลื่อนซ้ายขวา
+   จอกว้าง = แถวเดียวเหมือนเดิม · จอแคบ = พับเป็น 2-3 บรรทัด ไม่ล้น
+   ============================================================ */
+.ch-row { display: grid; grid-template-columns: 30px minmax(64px, 92px) minmax(40px, 1fr) auto auto; gap: 4px 10px; align-items: center; min-width: 0; }
+.ch-row-name { font-size: 13px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ch-row-bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; min-width: 40px; }
+.ch-row-money { text-align: right; white-space: nowrap; font-weight: 700; font-size: 14px; }
+.ch-row-orders { text-align: right; white-space: nowrap; color: var(--ink-3); }
+@media (max-width: 700px) {
+  .ch-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .ch-row-logo { grid-area: 1 / 1 / 2 / 2; }
+  .ch-row-name { grid-area: 1 / 2 / 2 / 3; }
+  .ch-row-money { grid-area: 1 / 3 / 2 / 4; }
+  .ch-row-bar { grid-area: 2 / 2 / 3 / 3; }
+  .ch-row-orders { grid-area: 2 / 3 / 3 / 4; }
+}
+
+/* แถวช่องทางของแท็บโฆษณา — ข้อมูลเยอะกว่า (แอด/ยอด/ROAS) พับ 3 บรรทัดบนจอแคบ */
+.ad-row { display: grid; grid-template-columns: 30px minmax(64px, 84px) minmax(40px, 1fr) auto auto auto; gap: 4px 10px; align-items: center; min-width: 0; }
+.ad-row-name { font-size: 13px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ad-row-bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; min-width: 40px; }
+.ad-row-ad, .ad-row-sales, .ad-row-roas { text-align: right; white-space: nowrap; }
+@media (max-width: 860px) {
+  .ad-row { grid-template-columns: 30px minmax(0, 1fr) auto; }
+  .ad-row-logo { grid-area: 1 / 1 / 2 / 2; }
+  .ad-row-name { grid-area: 1 / 2 / 2 / 3; }
+  .ad-row-roas { grid-area: 1 / 3 / 2 / 4; }
+  .ad-row-bar { grid-area: 2 / 2 / 3 / 3; }
+  .ad-row-ad { grid-area: 2 / 3 / 3 / 4; }
+  .ad-row-sales { grid-area: 3 / 2 / 4 / 4; justify-self: end; }
+}
+
+/* ปุ่มบันทึกผลการติดต่อในการ์ด "ควรติดต่อตอนนี้" (PART 110) */
+.crm-log-btn { border: 1px solid; border-radius: 999px; padding: 2px 10px; font-size: var(--fs-cap); font-weight: 600; background: var(--surface); transition: background .15s; }
+.crm-log-btn:hover { background: var(--surface-2); }

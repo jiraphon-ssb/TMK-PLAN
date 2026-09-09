@@ -92,11 +92,11 @@ export function ManualSaleSheet({ user, onClose, onSaved }) {
   };
 
   return (
-    <SideSheet size="lg" icon="pencil" title="เพิ่มออเดอร์" sub={`เซลล์: ${user?.name || user?.email || '—'} · เข้าระบบเดียวกับใบเสร็จ`} onClose={onClose}
+    <SideSheet size="lg" icon="pencil" title="เพิ่มออเดอร์" sub={`เซลล์ ${user?.name || user?.email || '—'} · บันทึกแล้วคีย์ใบต่อไปได้เลย`} onClose={onClose}
       footer={<>
         <span className="mr-auto text-sm"><span style={{ color: 'var(--ink-4)' }}>รวม </span><b style={{ color: 'var(--accent)' }}>{fmtB(effectiveTotal)}</b></span>
         <Button variant="outline" onClick={onClose}>ปิด</Button>
-        <Button disabled={busy || !valid} onClick={save}><Icon name="check" /> {busy ? 'กำลังบันทึก…' : 'บันทึก'}</Button>
+        <Button disabled={busy} title={!valid ? 'ต้องมี ช่องทาง + รายการ (ลาย/จำนวน/ราคา) อย่างน้อย 1' : undefined} onClick={save}><Icon name="check" /> {busy ? 'กำลังบันทึก…' : 'บันทึกออเดอร์'}</Button>
       </>}>
       <OrderForm f={f} setF={setF} mode="add" paymentOptions={RECEIPT_PAYMENTS} lockedSeller={user?.name || user?.email || '—'} />
     </SideSheet>

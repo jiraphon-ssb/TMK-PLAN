@@ -32,3 +32,63 @@ jobs:
       # ถ้าเจอกฎที่ "ตั้งใจฝ่าฝืน" ให้ใส่ eslint-disable-next-line + คอมเมนต์เหตุผล ไม่ใช่ปิดกฎทั้งไฟล์
       - name: Lint (0 warnings)
         run: npm run lint -- --max-warnings=0
+
+      # E2E เฉพาะชุด public (ไม่ต้องมีบัญชีเทส) — จับหน้าขาว/ฟอร์มล็อกอินพัง/มือถือล้นจอ
+      # ชุด app (ต้องล็อกอิน) รันในเครื่องเมื่อมี .env.e2e — ไม่ผูกกับ CI เพราะไม่ควรเก็บบัญชีจริงไว้ที่นี่
+      - name: Install Playwright (chromium)
+        run: npx playwright install --with-deps chromium
+
+      # ใส่ค่า Supabase จำลอง: หน้าเข้าสู่ระบบต้อง render ได้โดยไม่มี console.error
+      # (ไม่มี env จริงใน CI โดยตั้งใจ — เทสชุด public ไม่แตะฐานข้อมูล)
+      - name: E2E (public)
+        run: npx playwright test --project=public
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+
+      # ── gate เพิ่ม 8 ก.ย. 69 — ปิดช่องที่ปล่อยบั๊กสัปดาห์นี้หลุดได้ ──────────────
+      # 1) บันเดิล edge function ต้อง build ได้ และมีสูตรกลางครบทุกตัว
+      #    Dashboard ไม่อัปโหลด _shared ให้ → ต้อง build:edge แล้ว paste เอง
+      #    ⚠️ ข้อจำกัด: CI เทียบกับ "ของที่ deploy จริง" ไม่ได้ (dist-edge/ อยู่ใน .gitignore
+      #       และ index.ts มักมีของแก้ค้างในเครื่อง) → gate นี้จับได้แค่ "บันเดิลพัง/สูตรหาย"
+      #       ส่วน "ลืม paste ลง Dashboard" ยังต้องอาศัยวินัยคน — จดไว้ที่ CLAUDE.md
+      - name: Edge bundle build ได้ + มีสูตรครบ
+        run: |
+          npm run build:edge
+          node -e "
+            const fs = require('fs');
+            const shared = fs.readFileSync('supabase/functions/_shared/saleFormulas.js', 'utf8');
+            const bundle = fs.readFileSync('dist-edge/daily-sale-report.ts', 'utf8');
+            const names = [...shared.matchAll(/export (?:function|const) (\w+)/g)].map(m => m[1]);
+            const missing = names.filter(n => !bundle.includes(n));
+            if (missing.length) { console.error('::error::บันเดิลขาดสูตร: ' + missing.join(', ') + ' — รัน npm run build:edge ใหม่'); process.exit(1); }
+            console.log('บันเดิลมีสูตรครบ ' + names.length + ' ตัว');
+          "
+
+      # 2) migration ห้ามปิด RLS และห้ามสร้าง policy เปิดกว้างแบบไม่มี guard
+      #    (RLS-REAPPLY.sql เคยเปิดช่องให้ตั้งตัวเองเป็นแอดมินมาแล้ว)
+      - name: SQL guard (RLS)
+        run: |
+          fail=0
+          if grep -rniE '^\s*alter table .* disable row level security' supabase/migrations/; then
+            echo "::error::migration มี 'disable row level security' ที่ไม่ได้คอมเมนต์"; fail=1
+          fi
+          # create policy tmk_authenticated_all ต้องอยู่ในไฟล์ที่มี guard เช็ค pg_policies ก่อน
+          for f in $(grep -rl 'create policy tmk_authenticated_all' supabase/migrations/ || true); do
+            if ! grep -q 'pg_policies' "$f"; then
+              echo "::error::$f สร้าง policy เปิดกว้างโดยไม่เช็ค pg_policies ก่อน"; fail=1
+            fi
+          done
+          exit $fail
+
+      # 3) APP_VERSION (แยกออกจาก changelog.js เพื่อ first paint) ต้องไม่หลุดจาก CHANGELOG[0].ver
+      #    ลืมอัปเดต = จุดแดง "ยังไม่อ่าน" ไม่เด้ง และหน้าตั้งค่าโชว์เวอร์ชันผิด
+      #    (มีเทสคุมอยู่แล้วที่ lib/__tests__/appVersion.test.js — step นี้ทำให้เห็นเหตุชัดใน log)
+      - name: APP_VERSION ตรงกับ changelog
+        run: |
+          node -e "
+            const v = require('fs').readFileSync('src/appVersion.js','utf8').match(/APP_VERSION = '([^']+)'/)[1];
+            const c = require('fs').readFileSync('src/changelog.js','utf8').match(/ver: '([^']+)'/)[1];
+            if (v !== c) { console.error('::error::APP_VERSION=' + v + ' แต่ CHANGELOG[0].ver=' + c); process.exit(1); }
+            console.log('APP_VERSION ' + v + ' ตรงกับ changelog');
+          "

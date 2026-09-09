@@ -18,7 +18,6 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { SearchInput } from '@/components/ui/search-input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -82,7 +81,7 @@ function mapRow(r) {
     raw: r,
   };
 }
-const fmtTime = (ts) => new Date(ts).toLocaleString('th-TH', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' });
+const fmtClock = (ts) => new Date(ts).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });   // แถวในฟีด: เวลาอย่างเดียว (วันอยู่หัวกลุ่ม)
 const fmtFull = (ts) => new Date(ts).toLocaleString('th-TH', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 // group หัววัน
 function dayLabel(ts) {
@@ -118,6 +117,7 @@ export function LogView() {
   const [colsOk, setColsOk] = useState(true);       // false = ยังไม่รัน migration (คอลัมน์ใหม่ไม่มี)
   const [stats, setStats] = useState({ today: 0, groups: {} });
   const [detail, setDetail] = useState(null);       // row สำหรับ drawer
+  const [filtersOpen, setFiltersOpen] = useState(false);   // ตัวกรองละเอียดพับไว้ (เปิดมาเห็นข้อมูลก่อน)
 
   // reset page เมื่อ filter เปลี่ยน
   const resetPage = () => setPage(0);
@@ -263,9 +263,19 @@ export function LogView() {
     ];
   }, []);
   const setRange = (from, to) => { setDateFrom(from); setDateTo(to); setPage(0); };
-  const activePreset = datePresets.find(p => p.from === dateFrom && p.to === dateTo)?.label;
+  const activePresetLabel = datePresets.find(p => p.from === dateFrom && p.to === dateTo)?.label;
+  const activePreset = activePresetLabel;
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const nameOf = (email) => (DD.staff.find(s => s.email === email || s.name === email)?.name) || (email || '').split('@')[0] || 'system';
+  // ชิปบอกตัวกรองที่เปิดอยู่ (เห็นแม้พับแผง) + จำนวนตัวกรองละเอียด
+  const nAdv = users.length + entities.length + severities.length + (flowId ? 1 : 0) + ((dateFrom || dateTo) ? 1 : 0);
+  const activeChips = [
+    ...users.map(v => ({ label: `ผู้ใช้: ${nameOf(v)}`, clear: () => { setUsers(users.filter(x => x !== v)); resetPage(); } })),
+    ...entities.map(v => ({ label: `ชนิด: ${ENTITY_TH[v] || v}`, clear: () => { setEntities(entities.filter(x => x !== v)); resetPage(); } })),
+    ...severities.map(v => ({ label: `ระดับ: ${SEV_META[v]?.l || v}`, clear: () => { setSeverities(severities.filter(x => x !== v)); resetPage(); } })),
+    ...(flowId ? [{ label: `โครงการ: ${(flows.find(f => f.id === flowId) || {}).name || flowId}`, clear: () => { setFlowId(''); resetPage(); } }] : []),
+    ...((dateFrom || dateTo) && activePresetLabel !== 'วันนี้' ? [{ label: `ช่วง: ${dateFrom || '—'} → ${dateTo || '—'}`, clear: () => setRange('', '') }] : []),
+  ];
 
   // ข้อมูลอยู่ใน TMK singleton แล้ว = ไม่มีการโหลดจริง → render ทันที (เดิมมี skeleton หลอก 320-350ms)
 
@@ -286,59 +296,83 @@ export function LogView() {
         </div>
       </div>
 
-      {/* สถิติ */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        <StatCell label="ทั้งหมด" value={N(total)} c="var(--ink-2)" />
-        <StatCell label="วันนี้" value={N(stats.today)} c="var(--accent)" />
-        <StatCell label="สร้าง" value={N(stats.groups.create || 0)} c="var(--good)" />
-        <StatCell label="แก้ไข/ย้าย" value={N(stats.groups.update || 0)} c="var(--info)" />
-        <StatCell label="ลบ" value={N(stats.groups.delete || 0)} c="var(--bad)" />
-      </div>
-
-      {/* ---- แถบตัวกรอง ---- */}
+      {/* ---- แถบเดียว: ชิปกรองที่กดได้ (เดิมเป็น KPI 5 กล่องกดไม่ได้ + ชิปกรองซ้ำอีกแถว) + ตัวกรองละเอียดพับไว้ ---- */}
       <Card className="p-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <ToggleGroup type="single" variant="pill" size="sm" value={actionG} onValueChange={(v) => { setActionG(v || 'all'); resetPage(); }}>
-            <ToggleGroupItem value="all">ทั้งหมด</ToggleGroupItem>
-            <ToggleGroupItem value="create">สร้าง</ToggleGroupItem>
-            <ToggleGroupItem value="update">แก้ไข</ToggleGroupItem>
-            <ToggleGroupItem value="delete">ลบ</ToggleGroupItem>
-            <ToggleGroupItem value="auth">เข้า/ออก</ToggleGroupItem>
-          </ToggleGroup>
-          <MultiSelect label="ผู้ใช้" options={userOpts} value={users} onChange={(v) => { setUsers(v); resetPage(); }} />
-          <MultiSelect label="ชนิด" options={entityOpts} value={entities} onChange={(v) => { setEntities(v); resetPage(); }} />
-          <MultiSelect label="ระดับ" options={sevOpts} value={severities} onChange={(v) => { setSeverities(v); resetPage(); }}
-            render={o => <span className="flex items-center gap-2"><span className="size-2 rounded-full" style={{ background: SEV_META[o.value]?.c }} />{o.label}</span>} />
-          {flows.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className={'h-8 rounded-full font-normal gap-1' + (flowId ? ' border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-2)]' : '')}>
-                  โครงการ{flowId && <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[11px]">1</Badge>}<Icon name="down" className="size-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" sideOffset={6} className="max-h-72 w-52 overflow-auto">
-                <DropdownMenuLabel className="py-1">โครงการ</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem checked={flowId === ''} onSelect={e => { e.preventDefault(); setFlowId(''); resetPage(); }}>ทั้งหมด</DropdownMenuCheckboxItem>
-                {flows.map(f => <DropdownMenuCheckboxItem key={f.id} checked={flowId === f.id} onSelect={e => { e.preventDefault(); setFlowId(f.id); resetPage(); }}>{f.name}</DropdownMenuCheckboxItem>)}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="ค้นหา" wrapperClassName="ml-auto w-full sm:w-56" className="h-8" />
+          {[
+            ['all', 'ทั้งหมด', N(total), 'var(--ink-2)'],
+            ['create', 'สร้าง', N(stats.groups.create || 0), 'var(--good)'],
+            ['update', 'แก้ไข/ย้าย', N(stats.groups.update || 0), 'var(--info)'],
+            ['delete', 'ลบ', N(stats.groups.delete || 0), 'var(--bad)'],
+            ['auth', 'เข้า/ออก', N(stats.groups.auth || 0), 'var(--ink-3)'],
+          ].map(([k, l, v, c]) => {
+            const on = actionG === k;
+            return (
+              <button type="button" key={k} onClick={() => { setActionG(k); resetPage(); }} aria-pressed={on}
+                className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-semibold transition-colors"
+                style={{ borderColor: on ? c : 'var(--line)', background: on ? `color-mix(in srgb, ${c} 12%, var(--surface))` : 'var(--surface)', color: on ? c : 'var(--ink-3)' }}>
+                {k !== 'all' && <span className="size-2 rounded-full" style={{ background: c }} />}{l} <b className="num">{v}</b>
+              </button>
+            );
+          })}
+          <span className="mx-1 h-5 w-px" style={{ background: 'var(--line)' }} />
+          {/* วันนี้ = ตัวกรองช่วงวัน (เดิมเป็นตัวเลขเฉยๆ ใน KPI) */}
+          <button type="button" onClick={() => setRange(activePreset === 'วันนี้' ? '' : todayISO(), activePreset === 'วันนี้' ? '' : todayISO())} aria-pressed={activePreset === 'วันนี้'}
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-semibold transition-colors"
+            style={{ borderColor: activePreset === 'วันนี้' ? 'var(--accent)' : 'var(--line)', background: activePreset === 'วันนี้' ? 'var(--accent-soft)' : 'var(--surface)', color: activePreset === 'วันนี้' ? 'var(--accent-2)' : 'var(--ink-3)' }}>
+            วันนี้ <b className="num">{N(stats.today)}</b>
+          </button>
+          <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="ค้นหาในบันทึก" wrapperClassName="ml-auto w-full sm:w-56" className="h-8" />
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 shrink-0" onClick={() => setFiltersOpen(v => !v)} aria-expanded={filtersOpen}>
+            <Icon name="filter" className="size-3.5" /> ตัวกรอง{nAdv > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">{nAdv}</Badge>}
+            <Icon name="chevD" className="size-3.5" style={filtersOpen ? { transform: 'rotate(180deg)' } : undefined} />
+          </Button>
         </div>
-        {/* ช่วงวันที่ */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-background border rounded-md p-1 h-9">
-            <DatePicker value={dateFrom} onChange={(v) => setRange(v, dateTo)} placeholder="ตั้งแต่" className="h-7 w-[130px] text-sm" />
-            <span className="text-muted-foreground text-sm">→</span>
-            <DatePicker value={dateTo} onChange={(v) => setRange(dateFrom, v)} placeholder="ถึง" className="h-7 w-[130px] text-sm" />
+        {/* ชิปตัวกรองที่เปิดอยู่ — เห็นเสมอแม้พับแผงไว้ */}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {activeChips.map(({ label, clear }) => (
+              <Badge key={label} variant="outline" onClick={clear} title="คลิกเพื่อเอาออก" style={{ cursor: 'pointer', padding: '2px 8px' }}>{label} <Icon name="x" className="size-3" /></Badge>
+            ))}
+            <Button variant="ghost" size="sm" className="h-7 text-[var(--bad)]" onClick={clearAll}>ล้างทั้งหมด</Button>
           </div>
-          {datePresets.map(p => (
-            <Button key={p.label} variant={activePreset === p.label ? 'secondary' : 'outline'} size="sm" onClick={() => setRange(p.from, p.to)}>{p.label}</Button>
-          ))}
-          {nFilters > 0 && <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={clearAll}>ล้างตัวกรอง ✕</Button>}
-          {!colsOk && <span className="text-[12px] text-[var(--warn)]">* กรอง “ชนิด/ระดับ” ครบเมื่อรัน migration 20260707</span>}
-        </div>
+        )}
+        {filtersOpen && (
+          <div className="flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--line)' }}>
+            <div className="flex flex-wrap items-center gap-2">
+              <MultiSelect label="ผู้ใช้" options={userOpts} value={users} onChange={(v) => { setUsers(v); resetPage(); }} />
+              <MultiSelect label="ชนิด" options={entityOpts} value={entities} onChange={(v) => { setEntities(v); resetPage(); }} />
+              <MultiSelect label="ระดับ" options={sevOpts} value={severities} onChange={(v) => { setSeverities(v); resetPage(); }}
+                render={o => <span className="flex items-center gap-2"><span className="size-2 rounded-full" style={{ background: SEV_META[o.value]?.c }} />{o.label}</span>} />
+              {flows.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className={'h-8 rounded-full font-normal gap-1' + (flowId ? ' border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-2)]' : '')}>
+                      โครงการ{flowId && <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[11px]">1</Badge>}<Icon name="chevD" className="size-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={6} className="max-h-72 w-52 overflow-auto">
+                    <DropdownMenuLabel className="py-1">โครงการ</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem checked={flowId === ''} onSelect={e => { e.preventDefault(); setFlowId(''); resetPage(); }}>ทั้งหมด</DropdownMenuCheckboxItem>
+                    {flows.map(f => <DropdownMenuCheckboxItem key={f.id} checked={flowId === f.id} onSelect={e => { e.preventDefault(); setFlowId(f.id); resetPage(); }}>{f.name}</DropdownMenuCheckboxItem>)}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-background border rounded-md p-1 h-9">
+                <DatePicker value={dateFrom} onChange={(v) => setRange(v, dateTo)} placeholder="ตั้งแต่" className="h-7 w-[130px] text-sm" />
+                <span className="text-muted-foreground text-sm">→</span>
+                <DatePicker value={dateTo} onChange={(v) => setRange(dateFrom, v)} placeholder="ถึง" className="h-7 w-[130px] text-sm" />
+              </div>
+              {datePresets.map(p => (
+                <Button key={p.label} variant={activePreset === p.label ? 'secondary' : 'outline'} size="sm" onClick={() => setRange(p.from, p.to)}>{p.label}</Button>
+              ))}
+              {!colsOk && <span className="text-[12px] text-[var(--warn)]">* กรอง “ชนิด/ระดับ” ครบเมื่อรัน migration 20260707</span>}
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* ---- รายการ (group ตามวัน) ---- */}
@@ -385,114 +419,164 @@ export function LogView() {
   );
 }
 
-function StatCell({ label, value, c }) {
-  return (
-    <div className="rounded-lg border bg-card px-3 py-2">
-      <div className="text-[11px] text-muted-foreground font-medium">{label}</div>
-      <div className="text-lg font-bold tabular-nums" style={{ color: c }}>{value}</div>
-    </div>
-  );
-}
 
 function LogRow({ a, onClick, nameOf }) {
   const m = actionMeta(a.action);
   const s = DD.staff.find(x => x.email === a.user || x.name === a.user) || { color: 'var(--ink-3)' };
   const sev = SEV_META[a.severity] || SEV_META.info;
   const fl = a.flowId == null ? null : (a.flowId === '' ? { name: 'งานทั่วไป', color: '#64748b' } : (DD.flows || []).find(f => f.id === a.flowId));
+  const who = nameOf(a.user);
+  // สรุป: ตัดชื่อคนที่ห้อยท้ายในวงเล็บ "(PAI)" ออก — ซ้ำกับ avatar+ชื่อด้านหน้าอยู่แล้ว (เทียบแบบไม่สนตัวพิมพ์ · ครอบทั้งชื่อและอีเมล)
+  const summary = (() => {
+    const t = String(a.summary || '').trim();
+    const m2 = t.match(/\(([^()]{1,40})\)\s*$/);
+    if (!m2) return t;
+    const inside = m2[1].trim().toLowerCase();
+    const mine = [who, a.user, String(a.user || '').split('@')[0]].filter(Boolean).map(x => String(x).toLowerCase());
+    return mine.includes(inside) ? t.slice(0, m2.index).trim() : t;
+  })();
   return (
-    <button onClick={onClick} className={'w-full text-left flex gap-3 p-3 sm:p-4 hover:bg-muted/30 transition-colors border-b border-border/40 border-l-2 ' + (a._fresh ? 'bg-[var(--good)]/5' : '')} style={{ borderLeftColor: sev.c }}>
-      <div className="shrink-0 mt-0.5"><Avatar name={nameOf(a.user)} color={s.color} size={34} /></div>
-      <div className="flex-1 min-w-0 flex flex-col gap-1">
+    <button onClick={onClick} className={'w-full text-left flex gap-2.5 px-3 py-2.5 sm:px-4 hover:bg-muted/30 transition-colors border-b border-border/40 ' + (a._fresh ? 'bg-[var(--good)]/5' : '')}>
+      <span className="mt-1.5 size-2 shrink-0 rounded-full" title={sev.l} style={{ background: sev.c }} />
+      <div className="shrink-0"><Avatar name={who} color={s.color} size={30} /></div>
+      <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-foreground text-sm">{nameOf(a.user)}</span>
-          <span className="text-muted-foreground text-xs">· {ENTITY_TH[a.entity] || a.entity || 'ระบบ'}</span>
-          {fl && <Badge variant="outline" className="gap-1 text-[10px] h-5 px-1.5"><span className="size-1.5 rounded-full" style={{ background: fl.color || '#64748b' }} />{fl.name}</Badge>}
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-semibold shrink-0" style={{ background: m.c + '15', color: m.c, borderColor: m.c + '30' }}>{m.l}</Badge>
+          <span className="text-[13.5px] text-foreground/90 min-w-0">{summary}</span>
         </div>
-        <div className="text-sm text-foreground/90 line-clamp-2">{a.summary}</div>
+        <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[11px]" style={{ color: 'var(--ink-4)' }}>
+          <span className="font-medium" style={{ color: 'var(--ink-3)' }}>{who}</span>
+          <span>· {ENTITY_TH[a.entity] || a.entity || 'ระบบ'}</span>
+          {fl && <span className="inline-flex items-center gap-1">· <span className="size-1.5 rounded-full" style={{ background: fl.color || '#64748b' }} />{fl.name}</span>}
+        </div>
         {a.changes && a.changes.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-1">
-            {a.changes.slice(0, 4).map((c, j) => (
-              <Badge key={j} variant="secondary" className="text-xs font-normal bg-muted/50">
-                <span className="opacity-70 mr-1">{c.label}:</span><span className="line-through opacity-50 mr-1">{c.from || '—'}</span><span className="text-muted-foreground mx-0.5">→</span><span className="text-primary font-semibold ml-1">{c.to || '—'}</span>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {a.changes.slice(0, 3).map((c, j) => (
+              <Badge key={j} variant="secondary" className="text-[11px] font-normal bg-muted/50">
+                <span className="opacity-70 mr-1">{c.label}:</span><span className="line-through opacity-50 mr-1">{c.from || '—'}</span><span className="mx-0.5">→</span><span className="text-primary font-semibold ml-1">{c.to || '—'}</span>
               </Badge>
             ))}
-            {a.changes.length > 4 && <span className="text-[11px] text-muted-foreground self-center">+{a.changes.length - 4}</span>}
+            {a.changes.length > 3 && <span className="text-[11px] text-muted-foreground self-center">+{a.changes.length - 3}</span>}
           </div>
         )}
       </div>
-      <div className="flex flex-col items-end gap-1.5 shrink-0">
-        <Badge variant="outline" className="font-medium shrink-0" style={{ background: m.c + '15', color: m.c, borderColor: m.c + '30' }}>{m.l}</Badge>
-        <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{fmtTime(a.ts)}</span>
-      </div>
+      {/* เวลาอย่างเดียว — วันที่อยู่หัวกลุ่มวันแล้ว */}
+      <span className="shrink-0 self-start text-[11px] tabular-nums whitespace-nowrap" style={{ color: 'var(--ink-4)' }}>{fmtClock(a.ts)}</span>
     </button>
   );
 }
 
+function relTime(ts) {
+  const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (diff < 90) return 'เมื่อสักครู่';
+  if (diff < 3600) return `${Math.round(diff / 60)} นาทีที่แล้ว`;
+  if (diff < 86400) return `${Math.round(diff / 3600)} ชม.ที่แล้ว`;
+  const d = Math.round(diff / 86400);
+  return d < 30 ? `${d} วันที่แล้ว` : '';
+}
 function LogDetail({ a, nameOf }) {
+  // รื้อ 22 ส.ค.: เดิม JSON 2 ก้อนกางเต็มเสมอ (Raw ครอบ machine อยู่แล้ว) + "รายละเอียด" เป็นชิป 12 อันเรียงยาว
+  const [rawOpen, setRawOpen] = useState(false);
   const m = actionMeta(a.action);
   const sev = SEV_META[a.severity] || SEV_META.info;
-  const s = DD.staff.find(x => x.email === a.user || x.name === a.user) || { color: 'var(--ink-3)' };
+  const st = DD.staff.find(x => x.email === a.user || x.name === a.user) || { color: 'var(--ink-3)' };
   const fl = a.flowId == null ? null : (a.flowId === '' ? { name: 'งานทั่วไป', color: '#64748b' } : (DD.flows || []).find(f => f.id === a.flowId));
   const rawJson = (() => { try { return JSON.stringify(JSON.parse(a.raw.details), null, 2); } catch { return String(a.raw.details || ''); } })();
   const copy = (txt) => { navigator.clipboard?.writeText(txt).then(() => toast('คัดลอกแล้ว', 'success')); };
+  const who = nameOf(a.user);
+  const entityTh = ENTITY_TH[a.entity] || a.entity || 'ระบบ';
+  const idShown = a.entityId && String(a.entityId) !== String(a.entityName || '') && !String(a.entityName || '').includes(String(a.entityId));
+  const rel = relTime(a.ts);
+  // ข้อความสรุปทั้งรายการ (คัดลอกไปแปะแชท/ตั๋วได้เลย)
+  const plain = [
+    `${m.l} · ${entityTh}${a.entityName ? ` · ${a.entityName}` : ''}`,
+    a.summary,
+    `${who} (${a.user}) · ${fmtFull(a.ts)}`,
+    ...(a.fields || []).map(f => `${f.label}: ${f.value}`),
+    ...(a.changes || []).map(c => `${c.label}: ${c.from || '—'} → ${c.to || '—'}`),
+  ].filter(Boolean).join('\n');
   return (
     <>
       <SheetHeader>
-        <SheetTitle className="flex items-center gap-2">
-          <Avatar name={nameOf(a.user)} color={s.color} size={32} />
-          <div className="flex flex-col items-start">
-            <span className="text-base">{nameOf(a.user)}</span>
-            <span className="text-xs text-muted-foreground font-normal">{a.user}</span>
+        <SheetTitle className="flex items-start gap-2.5">
+          <Avatar name={who} color={st.color} size={34} />
+          <div className="flex flex-col items-start min-w-0">
+            <span className="row items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-semibold" style={{ background: m.c + '15', color: m.c, borderColor: m.c + '30' }}>{m.l}</Badge>
+              <span className="text-base">{entityTh}</span>
+              {a.severity !== 'info' && <Badge variant="outline" className="h-5 px-1.5 text-[11px]" style={{ background: sev.c + '15', color: sev.c, borderColor: sev.c + '30' }}>{sev.l}</Badge>}
+            </span>
+            <span className="text-xs font-normal text-muted-foreground mt-0.5">{who} · {rel ? `${rel} · ` : ''}{fmtFull(a.ts)}</span>
           </div>
         </SheetTitle>
       </SheetHeader>
-      <div className="flex flex-col gap-4 mt-2">
-        <div className="flex flex-wrap gap-2 items-center">
-          <Badge variant="outline" style={{ background: m.c + '15', color: m.c, borderColor: m.c + '30' }}>{m.l}</Badge>
-          <Badge variant="outline">{ENTITY_TH[a.entity] || a.entity || 'ระบบ'}</Badge>
-          <Badge variant="outline" style={{ background: sev.c + '15', color: sev.c, borderColor: sev.c + '30' }}>{sev.l}</Badge>
-          {fl && <Badge variant="outline" className="gap-1"><span className="size-1.5 rounded-full" style={{ background: fl.color }} />{fl.name}</Badge>}
+      <div className="flex flex-col gap-4 mt-3">
+        {/* สรุปสิ่งที่เกิดขึ้น — เด่นสุดในหน้า */}
+        <div className="rounded-xl border p-3.5" style={{ borderColor: 'var(--line)', background: 'var(--surface-2)' }}>
+          <div className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{a.summary || '—'}</div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]" style={{ color: 'var(--ink-4)' }}>
+            {a.entityName && <span>รายการ: <b style={{ color: 'var(--ink-2)' }}>{a.entityName}</b>{idShown ? <span className="num"> #{a.entityId}</span> : null}</span>}
+            {fl && <span className="inline-flex items-center gap-1"><span className="size-1.5 rounded-full" style={{ background: fl.color }} />{fl.name}</span>}
+            <span className="num">{a.user}</span>
+          </div>
         </div>
-        <div className="text-sm">{a.summary}</div>
-        <div className="text-xs text-muted-foreground">{fmtFull(a.ts)}</div>
-        {(a.entityName || a.entityId) && (
-          <Row label="รายการ">{a.entityName}{a.entityId ? <span className="text-muted-foreground ml-1">#{a.entityId}</span> : null}</Row>
-        )}
+
+        {/* การเปลี่ยนแปลง — ตาราง จาก → เป็น */}
         {a.changes && a.changes.length > 0 && (
           <div>
-            <div className="text-[12px] font-semibold text-muted-foreground mb-1.5">การเปลี่ยนแปลง</div>
-            <div className="flex flex-col gap-1.5">
+            <div className="text-[12px] font-semibold text-muted-foreground mb-1.5">การเปลี่ยนแปลง ({N(a.changes.length)})</div>
+            <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
               {a.changes.map((c, j) => (
-                <div key={j} className="text-sm flex flex-wrap items-center gap-1.5 border rounded-md px-2.5 py-1.5">
-                  <span className="text-muted-foreground">{c.label}:</span><span className="line-through opacity-60">{c.from || '—'}</span><span className="text-muted-foreground">→</span><span className="text-primary font-semibold">{c.to || '—'}</span>
+                <div key={j} className="grid items-center gap-2 px-3 py-2 text-[13px]" style={{ gridTemplateColumns: 'minmax(72px, 26%) 1fr auto 1fr', borderTop: j ? '1px solid var(--line)' : undefined }}>
+                  <span className="truncate" style={{ color: 'var(--ink-4)' }}>{c.label}</span>
+                  <span className="truncate line-through" style={{ color: 'var(--ink-4)' }}>{c.from || '—'}</span>
+                  <Icon name="arrowR" className="size-3.5" style={{ color: 'var(--ink-4)' }} />
+                  <span className="truncate font-semibold" style={{ color: 'var(--accent-2)' }}>{c.to || '—'}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
+
+        {/* รายละเอียด — ตารางคีย์/ค่า (เดิมเป็นชิป 12 อันเรียงพันกัน อ่านคู่ไม่ออก) */}
         {a.fields && a.fields.length > 0 && (
           <div>
             <div className="text-[12px] font-semibold text-muted-foreground mb-1.5">รายละเอียด</div>
-            <div className="flex flex-wrap gap-1.5">
-              {a.fields.map((f, j) => <Badge key={j} variant="secondary" className="font-normal"><span className="opacity-70 mr-1">{f.label}:</span><span className="font-semibold">{f.value}</span></Badge>)}
+            <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
+              {a.fields.map((f, j) => (
+                <div key={j} className="flex items-start gap-3 px-3 py-1.5 text-[13px]" style={{ borderTop: j ? '1px solid var(--line)' : undefined, background: j % 2 ? 'var(--surface-2)' : undefined }}>
+                  <span className="shrink-0" style={{ color: 'var(--ink-4)', width: 108 }}>{f.label}</span>
+                  <span className="min-w-0 flex-1 font-medium" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{f.value}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
-        {a.data && (
-          <div>
-            <div className="text-[12px] font-semibold text-muted-foreground mb-1.5 flex items-center justify-between">ข้อมูล (machine) <button className="text-[11px] text-primary hover:underline" onClick={() => copy(JSON.stringify(a.data, null, 2))}>คัดลอก</button></div>
-            <pre className="text-[11px] bg-muted/40 rounded-md p-2.5 overflow-x-auto max-h-56">{JSON.stringify(a.data, null, 2)}</pre>
+
+        {/* ข้อมูลดิบ — พับไว้ (คนใช้จริงไม่ได้อ่าน · เดิมกางเต็ม 2 ก้อนซ้ำกัน) */}
+        <div className="rounded-lg border" style={{ borderColor: 'var(--line)' }}>
+          <div className="flex items-center gap-2 px-3 py-2">
+            <button type="button" onClick={() => setRawOpen(v => !v)} className="row items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--ink-3)' }} aria-expanded={rawOpen}>
+              <Icon name="chevD" className="size-3.5" style={rawOpen ? { transform: 'rotate(180deg)' } : undefined} /> ข้อมูลดิบ (JSON)
+            </button>
+            <span className="text-[11px] text-muted-foreground">สำหรับตรวจสอบ/ส่งให้ผู้ดูแลระบบ</span>
+            <button type="button" className="ml-auto text-[11px] text-primary hover:underline" onClick={() => copy(rawJson)}>คัดลอก JSON</button>
           </div>
-        )}
-        <div>
-          <div className="text-[12px] font-semibold text-muted-foreground mb-1.5 flex items-center justify-between">Raw <button className="text-[11px] text-primary hover:underline" onClick={() => copy(rawJson)}>คัดลอก</button></div>
-          <pre className="text-[11px] bg-muted/40 rounded-md p-2.5 overflow-x-auto max-h-56">{rawJson}</pre>
+          {rawOpen && (
+            <div className="border-t px-3 py-2" style={{ borderColor: 'var(--line)' }}>
+              {a.data && <>
+                <div className="mb-1 text-[11px] font-semibold text-muted-foreground">data</div>
+                <pre className="mb-2 max-h-56 overflow-auto rounded-md bg-muted/40 p-2.5 text-[11px]">{JSON.stringify(a.data, null, 2)}</pre>
+              </>}
+              <div className="mb-1 text-[11px] font-semibold text-muted-foreground">details (ทั้งก้อน)</div>
+              <pre className="max-h-72 overflow-auto rounded-md bg-muted/40 p-2.5 text-[11px]">{rawJson}</pre>
+            </div>
+          )}
         </div>
+
+        <Button variant="outline" size="sm" className="self-start gap-1.5" onClick={() => copy(plain)}><Icon name="layers" className="size-3.5" /> คัดลอกสรุปทั้งรายการ</Button>
       </div>
     </>
   );
 }
 
-function Row({ label, children }) {
-  return <div className="text-sm flex gap-2"><span className="text-muted-foreground shrink-0 w-16">{label}</span><span className="font-medium">{children}</span></div>;
-}

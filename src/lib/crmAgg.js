@@ -22,10 +22,12 @@ const daysIn = (ym) => { const [y, m] = ym.split('-').map(Number); return new Da
 const prevYm = (ym) => { const [y, m] = ym.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; };
 
 // สรุปยอด CRM รายเดือน — orders = ทุกออเดอร์ (all-time · merge override แล้ว), month = 'YYYY-MM'
-// seller (optional) = scope ยอด CRM เฉพาะเซลล์คนนั้น (แต่ totalSales/crmShare คิดจากยอดรวมทั้งบริษัทเสมอ · bySeller ไม่โดน filter)
+// seller (optional) = scope ยอด CRM: '' = ไม่ scope · ชื่อเดียว = เซลล์คนนั้น · Set/array = ทีม CRM (D8)
+// (totalSales/crmShare คิดจากยอดรวมทั้งบริษัทเสมอ · bySeller ไม่โดน filter)
 export function buildCrmMonth(orders, month, seller = '') {
   const os = (orders || []).filter(o => !isCancelled(o));
-  const inScope = (o) => !seller || (o.salesperson || '').trim() === seller;
+  const teamSet = seller instanceof Set ? seller : Array.isArray(seller) ? new Set(seller) : null;
+  const inScope = (o) => { const sp = (o.salesperson || '').trim(); return teamSet ? teamSet.has(sp) : (!seller || sp === seller); };
   // firstCrmDate ต่อลูกค้า (สแกนทุกเดือน · scope ตามเซลล์ที่เลือก) → ใช้ตัด "ใหม่ vs ซื้อซ้ำ" ของเดือนที่เลือก
   const firstCrm = new Map();
   os.forEach(o => {

@@ -9,31 +9,55 @@ import { logAudit } from './audit.js';
 
 export const targetId = (salesperson, month) => `${salesperson}::${month}`;
 
-/** ดึงเป้าทั้งหมดของเดือนหนึ่ง → [] ถ้าตารางยังไม่มี/error */
-export async function fetchTargets(month) {
-  if (!month) return [];
+/** ดึงเป้าของเดือนหนึ่ง แบบ "บอกได้ว่าพลาดหรือเปล่า" → { rows, error }
+    จำเป็นเพราะ "ไม่มีเป้า" กับ "อ่านเป้าไม่ได้" ต้องปฏิบัติต่างกัน:
+    หน้าแรกเตือน "ยังไม่ได้ตั้งเป้าเดือนนี้" — ถ้าอ่านพลาดแล้วเราทำเป็นว่าไม่มี จะเตือนผิด
+    และแอดมินอาจไปกดคัดลอกเป้าทับของจริงที่มีอยู่แล้ว */
+export async function fetchTargetsResult(month) {
+  if (!month) return { rows: [], error: null };
   try {
     const { data, error } = await supabase
       .from('tmk_targets')
       .select('id,salesperson,month,sales_target,commission_rate,tiers,note')
       .eq('month', month);
-    if (error) return [];
-    return data || [];
-  } catch { return []; }
+    if (error) return { rows: [], error };
+    return { rows: data || [], error: null };
+  } catch (e) { return { rows: [], error: e }; }
+}
+
+/** ดึงเป้าทั้งหมดของเดือนหนึ่ง → [] ถ้าตารางยังไม่มี/error (ผู้เรียกที่ไม่สนสาเหตุ) */
+export async function fetchTargets(month) {
+  return (await fetchTargetsResult(month)).rows;
 }
 
 /** upsert เป้า 1 แถว — โยน error กลับให้ caller โชว์ toast (ตรวจ relation-missing เองที่ caller) */
-export async function saveTarget({ salesperson, month, sales_target = 0, commission_rate = 0, tiers = null, note = '' }) {
+/* หมายเหตุสิทธิ์ (PART 119): เป้า/เรตคอม = แอดมินเท่านั้น — UI ปิดหน้าให้แล้ว
+   และ migration 20260824-rls-tier3b-narrow.sql ล็อกที่ฐานข้อมูลอีกชั้น (write = admin) */
+/**
+ * แถวที่จะเขียนลง tmk_targets — แยกออกมาเพื่อเทสได้ (pure)
+ * ⚠️ ใส่เฉพาะฟิลด์ที่ผู้เรียก "ส่งมาจริง" เท่านั้น
+ *    เดิมมี default `tiers = null, note = ''` แล้วเขียนทุกครั้ง → ผู้เรียกที่ส่งแค่เป้ายอด
+ *    ล้างขั้นบันไดค่าคอม (tiers) และโน้ตของเดิมทิ้งเงียบ ๆ ทุกครั้งที่เซฟ
+ *    ซึ่ง commissionFor() อ่าน tiers อยู่จริง → คอมตกไปใช้ flat rate (ถ้าเป็น 0 = ฿0 ทั้งกระดาน)
+ *    upsert แบบไม่ใส่คีย์ = คอลัมน์นั้นในแถวเดิมไม่ถูกแตะ
+ *    ถ้าอยากล้างจริง ๆ ให้ส่ง tiers: null / note: '' มาตรง ๆ
+ */
+export function buildTargetRow(input) {
+  const { salesperson, month, sales_target = 0, commission_rate = 0 } = input || {};
   const row = {
     id: targetId(salesperson, month),
     salesperson, month,
     sales_target: Number(sales_target) || 0,
     commission_rate: Number(commission_rate) || 0,
-    tiers: tiers || null,
-    note: note || '',
     updated_at: new Date().toISOString(),
   };
-  return supabase.from('tmk_targets').upsert(row, { onConflict: 'id' });
+  if ('tiers' in (input || {})) row.tiers = input.tiers || null;
+  if ('note' in (input || {})) row.note = input.note || '';
+  return row;
+}
+
+export async function saveTarget(input) {
+  return supabase.from('tmk_targets').upsert(buildTargetRow(input), { onConflict: 'id' });
 }
 
 /** ลบเป้า (ตั้งค่ากลับเป็น 0 = ลบแถว) */

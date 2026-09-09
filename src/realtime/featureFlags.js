@@ -5,6 +5,7 @@
    แหล่งค่า (ลำดับความสำคัญ): window.__flags override (dev/test) → import.meta.env → default OFF
    ทั้งหมด default OFF = ไม่เปลี่ยน behavior จนกว่าจะเปิดจริง (ปลอดภัย)
    pure/injectable → unit-test ได้
+   ⚠️ ยังไม่ wire — primitive ของ REALTIME-C2-PLAN (ดู src/realtime/README.md) · อย่าลบเพราะ "ไม่มีใคร import"
    ============================================================ */
 
 // flag ที่รู้จัก (blueprint §26) — default OFF ทั้งหมด

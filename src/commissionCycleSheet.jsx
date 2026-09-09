@@ -9,14 +9,14 @@
    - วันตัดรอบ (default 26) แก้ได้เฉพาะแอดมิน — เก็บ tmk_settings.commission_cutoff_day
      (schema-tolerant: ยังไม่รัน migration → ใช้ 26 · เซฟไม่ได้จะบอกให้รัน migration)
    ============================================================ */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Icon, N, PersonAvatar } from './components.jsx';
 import { supabase } from './lib/supabaseClient.js';
 import { SideSheet } from './modals-core.jsx';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cachedFetchRange, cachedFetchAll, ORDERS_SEL, OVERRIDES_SEL } from './lib/saleData.js';
+import { cachedFetchRange, cachedFetchAll, ORDERS_SEL, OVERRIDES_SEL, strayOverrideOrderNos, fetchOrdersByNos, dedupeOrders } from './lib/saleData.js';
 import { mergeOrderOverrides } from './lib/saleOverrides.js';
 import { fetchTargets } from './lib/targets.js';
 import { orderVisibleTo } from './lib/roleAccess.js';
@@ -33,6 +33,9 @@ const thDate = (iso) => { const [y, m, d] = String(iso).split('-'); return `${Nu
 export function CommissionCycleSheet({ onClose, user, canSeeTeam }) {
   const [cutoff, setCutoff] = useState(DEFAULT_CUTOFF_DAY);
   const [endMonth, setEndMonth] = useState(null);             // 'YYYY-MM' — null จนกว่าจะรู้ cutoff จริง
+  const [loadErr, setLoadErr] = useState('');
+  const seqRef = useRef(0);
+  useEffect(() => () => { seqRef.current += 1; }, []);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [prevRows, setPrevRows] = useState([]);
@@ -56,6 +59,9 @@ export function CommissionCycleSheet({ onClose, user, canSeeTeam }) {
 
   // 2) โหลดข้อมูลรอบ + รอบก่อน (ทุกครั้งที่เปลี่ยนรอบ/วันตัด)
   const load = useCallback(async (em, day) => {
+    // กดสลับรอบเร็ว ๆ → รอบเก่าที่ตอบช้ากว่าเขียนทับตารางของรอบที่เลือกอยู่
+    const mySeq = ++seqRef.current;
+    const fresh = () => seqRef.current === mySeq;
     setLoading(true);
     try {
       const cyc = cycleOf(em, day);
@@ -67,14 +73,40 @@ export function CommissionCycleSheet({ onClose, user, canSeeTeam }) {
         fetchTargets(em),
         fetchTargets(shiftMonth(em, -1)),
       ]);
+      if (!fresh()) return;
+      /* ⚠️ cachedFetchRange คืน {error} ไม่ throw → ถ้าไม่เช็ค ตารางจะขึ้น ฿0 ทุกคน
+         ซึ่งเป็นตัวเลขค่าตอบแทนที่คนเอาไปเถียงกันจริง ต้องแยก "อ่านไม่ได้" ออกจาก "ยังไม่มียอด" */
+      /* ⚠️ ovR (override) ต้องอยู่ในชุดนี้ด้วย — มันคือชั้นที่ถือ salesperson/sales ที่แก้มือไว้
+         อ่านไม่ได้แล้วปล่อย ovMap = {} เงียบ ๆ → ตารางค่าคอมคิดจากค่าดิบ:
+         ยอดที่แก้แล้วย้อนกลับเป็นค่าเดิม และออเดอร์ที่โอนเซลล์แล้วถูกนับให้คนเก่า
+         ซึ่งเป็นตัวเลข "ค่าตอบแทน" ที่คนเอาไปเถียงกันจริง ต้องไม่เดาแทน */
+      const errObj = oR?.error || pR?.error || ovR?.error;
+      setLoadErr(errObj ? (errObj.message || 'โหลดยอดในรอบไม่สำเร็จ') : '');
+      if (errObj) { setRows([]); setPrevRows([]); return; }
       const ovMap = {}; if (ovR && !ovR.error) (ovR.data || []).forEach(x => { ovMap[x.order_id] = x; });
+      /* ⚠️ ต้องทำ stray pass + กรองช่วงซ้ำ "หลัง merge" เหมือนทุกหน้าที่คิดเงิน
+         (mergedMonth / salePerf / saleDashboard / homeView ทำครบหมด — หน้านี้เป็นทางสุดท้ายที่ขาด)
+         เดิมดึงตาม order_date "ดิบ" แล้ว merge override ทีหลัง โดยไม่กรองซ้ำ:
+           ใบที่แก้วันจาก 24 ส.ค. → 2 ก.ย. จะถูกนับใน "รอบ ส.ค." ทั้งที่หน้ารายงานนับเป็น ก.ย.
+           = ค่าคอมจ่ายผิดรอบ (พิสูจน์แล้ว: บี ได้ ฿45 ในรอบ ส.ค. แทนที่จะเป็นรอบ ก.ย.) */
+      const pick = async (res, from, to) => {
+        const base = res.data || [];
+        const nos = strayOverrideOrderNos(ovMap, from, to, base);
+        const extra = nos.length ? await fetchOrdersByNos('tmk_mp_orders', ORDERS_SEL, nos) : [];
+        return mergeOrderOverrides(dedupeOrders([...base, ...extra]), ovMap)
+          .filter(o => { const d = String(o.order_date || '').slice(0, 10); return !d || (d >= from && d <= to); });
+      };
+      const [curOrders, prevOrders] = await Promise.all([
+        pick(oR, cyc.from, cyc.to), pick(pR, prevCyc.from, prevCyc.to),
+      ]);
+      if (!fresh()) return;
       const scope = (list) => canSeeTeam ? list : (list || []).filter(o => orderVisibleTo(o, user)); // เซลล์เห็นเฉพาะของตัวเอง
       const tmap = {}; (tg || []).forEach(t => { tmap[t.salesperson] = t; });
       const ptmap = {}; (ptg || []).forEach(t => { ptmap[t.salesperson] = t; });
-      setRows(buildCycleRows(scope(mergeOrderOverrides(oR.data || [], ovMap)), tmap));
-      setPrevRows(buildCycleRows(scope(mergeOrderOverrides(pR.data || [], ovMap)), ptmap));
-    } catch { setRows([]); setPrevRows([]); }
-    finally { setLoading(false); }
+      setRows(buildCycleRows(scope(curOrders), tmap));
+      setPrevRows(buildCycleRows(scope(prevOrders), ptmap));
+    } catch (e) { if (fresh()) { setLoadErr(e?.message || 'โหลดยอดในรอบไม่สำเร็จ'); setRows([]); setPrevRows([]); } }
+    finally { if (fresh()) setLoading(false); }
   }, [canSeeTeam, user]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- โหลดข้อมูล async ตอนเปลี่ยนรอบ/วันตัด (pattern ปกติ · load เป็น useCallback)
   useEffect(() => { if (endMonth) load(endMonth, cutoff); }, [endMonth, cutoff, load]);
@@ -115,6 +147,31 @@ export function CommissionCycleSheet({ onClose, user, canSeeTeam }) {
         <div className="grid gap-3">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>
       ) : (
         <>
+          {/* ยังไม่ตั้งเป้าเดือนที่จบรอบเลยสักคน = ค่าคอมทั้งกระดานเป็น 0 — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้เห็นเลข 0 เฉย ๆ
+              เกิดตั้งแต่วันที่ 26 ของทุกเดือน (รอบไปจบเดือนหน้า) ไม่ใช่วันที่ 1 */}
+          {loadErr && (
+            <div role="alert" className="flex items-center gap-2.5 mb-3 px-3 py-2.5 rounded-[var(--r-sm)]"
+              style={{ background: 'color-mix(in srgb, var(--bad) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--bad) 35%, transparent)' }}>
+              <span style={{ color: 'var(--bad)', flexShrink: 0 }}><Icon name="alertTriangle" size={15} /></span>
+              <span className="text-sm flex-1 min-w-0"><b>โหลดยอดในรอบไม่สำเร็จ</b> — ตัวเลขที่เห็นยังไม่ใช่ค่าคอมจริง ({loadErr})</span>
+            </div>
+          )}
+          {!loadErr && rows.length > 0 && noTarget === rows.length && (
+            <div role="status" className="flex items-start gap-2.5 mb-3 px-3 py-2.5 rounded-[var(--r-sm)]"
+              style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--warn) 35%, transparent)' }}>
+              <span style={{ color: 'var(--warn)', flexShrink: 0, marginTop: 1 }}><Icon name="alertTriangle" size={15} /></span>
+              <div className="flex-1 min-w-0 text-sm">
+                <div className="font-semibold">ค่าคอมรอบนี้ยังเป็น 0 ทั้งกระดาน</div>
+                <div className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
+                  ยังไม่ได้ตั้งเป้า/เรทของเดือน {monthLabel(endMonth)} — ยอดขายที่เห็นถูกต้องแล้ว แต่คำนวณคอมไม่ได้จนกว่าจะตั้งเป้า
+                  {canSeeTeam && (
+                    <> · <button type="button" className="text-[var(--accent)] underline decoration-dotted"
+                      onClick={() => { onClose?.(); goSection('settings', 'targets'); }}>ไปตั้งเป้า</button></>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {/* สรุปทีม (เซลล์ธรรมดา = สรุปของตัวเอง) */}
           <div className="grid grid-cols-2 gap-2 mb-3">
             <div className="rounded-xl border p-3"><div className="text-[11px] text-muted-foreground">ยอดขายรวมในรอบ{canSeeTeam ? ' (ทั้งทีม)' : ''}</div><div className="text-xl font-bold num">{fmtB(teamSales)}</div></div>

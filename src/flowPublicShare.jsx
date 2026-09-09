@@ -46,7 +46,8 @@ export function PublicFlowShare({ token }) {
           const [tRes, cRes, sRes, dRes, chRes, bRes] = await Promise.all([
             supabase.from('tmk_tasks').select('*').eq('flow_id', f.id).is('deleted_at', null),
             supabase.from('tmk_campaigns').select('id,name,color').is('deleted_at', null),
-            supabase.from('tmk_staff').select('name,color,email').is('deleted_at', null),
+            // ไม่ขอ email — หน้านี้ใช้แค่ ชื่อ→สี และผู้ชมอาจไม่ได้ล็อกอิน (ดู 20260908-public-share-hardening.sql)
+            supabase.from('tmk_staff').select('name,color').is('deleted_at', null),
             supabase.from('tmk_duties').select('name,color').is('deleted_at', null),
             supabase.from('tmk_channels').select('id,name,color,logo_url').is('deleted_at', null),
             supabase.from('tmk_brands').select('id,name,color,logo_url').is('deleted_at', null),
@@ -58,7 +59,7 @@ export function PublicFlowShare({ token }) {
         // ใส่ข้อมูลประกอบลง TMK (ไม่มี DataProvider — public อ่านอย่างเดียว)
         TMK.campaigns = cData.map(c => ({ id: c.id, name: c.name, color: c.color }));
         TMK.brands = bData.map(b => ({ id: b.id, name: b.name, color: b.color || '#6b5ce0', logoUrl: b.logo_url || '' }));
-        TMK.staff = sData.map(s => ({ name: s.name, color: s.color || 'var(--ink-3)', email: s.email || '' }));
+        TMK.staff = sData.map(s => ({ name: s.name, color: s.color || 'var(--ink-3)', email: '' }));   // email ไม่ส่งมาแล้ว
         TMK.duties = dData.map(d => ({ name: d.name, color: d.color || 'var(--ink-3)' }));
         TMK.channels = chData.map(ch => ({ id: ch.id, name: ch.name, hex: ch.color, logoUrl: ch.logo_url || '', color: `var(--ch-${(ch.id || '').toLowerCase()})` }));
         if (!TMK.kanbanMeta || !TMK.kanbanMeta.length) TMK.kanbanMeta = [{ id: 'todo', label: 'รอดำเนินการ' }, { id: 'inprogress', label: 'กำลังทำ' }, { id: 'review', label: 'รอตรวจ' }, { id: 'done', label: 'เสร็จแล้ว' }];

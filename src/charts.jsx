@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell,
   BarChart, Bar,
   ComposedChart, Area, Line,
-  XAxis, YAxis, CartesianGrid,
+  XAxis, YAxis, CartesianGrid, ReferenceLine, ReferenceArea, ReferenceDot,
 } from 'recharts';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 
@@ -185,6 +185,36 @@ export function Gauge({ value, max, label, sub, height = 150 }) {
   );
 }
 
+// ---- เกจครึ่งวงกลมแบบมีโซน (ตามภาพ Company Dashboard ที่ user ชอบ · memory gauge-kpi-pattern) ----
+// value = ค่าปัจจุบันเทียบเกณฑ์ (1 = ตรงเกณฑ์พอดี) · zones = [{to, color}] เรียงจากซ้าย (0) → ขวา (max) · เข็มชี้ค่า
+// text = ตัวเลขใหญ่วางในโค้ง (สี = textColor) · ขีดกลาง = เกณฑ์ (value 1) · โซนที่เข็มอยู่เข้ม โซนอื่นจางลง
+export function ZoneGauge({ value = 0, max = 1.3, zones, height = 120, text, subText, textColor = 'var(--ink)', ariaLabel = 'เกจ' }) {
+  // โซน default: แดง <60% ของเกณฑ์ · เหลือง 60–100% · เขียว ≥ เกณฑ์ (เหลืองกว้างพอให้เห็น — เดิม 70–100 บางจนเป็นเส้น)
+  // ใช้ --gauge-* (สีสำหรับโค้งเกจโดยเฉพาะ) ไม่ใช่ --good/--warn/--bad ที่เข้มไว้สำหรับตัวหนังสือ
+  const zs = zones || [{ to: 0.6, color: 'var(--gauge-bad)' }, { to: 1, color: 'var(--gauge-warn)' }, { to: max, color: 'var(--gauge-good)' }];
+  const cx = 100, cy = 100, r = 82, w = 18;
+  const clamp = (v) => Math.max(0, Math.min(max, v));
+  const angOf = (v) => -Math.PI + (clamp(v) / max) * Math.PI;
+  const pt = (v, rr = r) => `${cx + rr * Math.cos(angOf(v))} ${cy + rr * Math.sin(angOf(v))}`;
+  const arc = (from, to) => `M ${pt(from)} A ${r} ${r} 0 0 1 ${pt(to)}`; // ครึ่งวงกลม: ทุกช่วง ≤180° → large-arc = 0 เสมอ
+  const nv = clamp(value), na = angOf(nv);
+  const segs = zs.map((z, i) => ({ from: i === 0 ? 0 : zs[i - 1].to, to: z.to, color: z.color, active: nv >= (i === 0 ? 0 : zs[i - 1].to) && (nv < z.to || i === zs.length - 1) }));
+  return (
+    <svg viewBox="0 0 200 108" width="100%" height={height} role="img" aria-label={`${ariaLabel} ${Math.round(value * 100)}%`} style={{ display: 'block', overflow: 'visible' }}>
+      {/* โซนที่เข็มอยู่ = สีเต็ม · โซนอื่นจางลงแต่ยังอ่านออก (เดิม 0.38 จางจนสีเพี้ยนไปคนละโทน) */}
+      {segs.map((z, i) => <path key={i} d={arc(z.from, z.to)} fill="none" stroke={z.color} strokeWidth={w} strokeLinecap={i === 0 || i === segs.length - 1 ? 'round' : 'butt'} opacity={z.active ? 1 : 0.28} />)}
+      {/* ขีดเกณฑ์ (value = 1) */}
+      <line x1={cx + (r - w / 2 - 3) * Math.cos(angOf(1))} y1={cy + (r - w / 2 - 3) * Math.sin(angOf(1))} x2={cx + (r + w / 2 + 3) * Math.cos(angOf(1))} y2={cy + (r + w / 2 + 3) * Math.sin(angOf(1))} stroke="var(--ink)" strokeWidth="2.2" opacity="0.6" />
+      {/* เลขใหญ่ในโค้ง */}
+      {text != null && <text x={cx} y={subText ? cy - 16 : cy - 6} textAnchor="middle" className="num" style={{ fontSize: 34, fontWeight: 800, fill: textColor, letterSpacing: '-1px' }}>{text}</text>}
+      {/* ป้ายความหมายของตัวเลข (ใต้เลข ในโค้ง) — กันเกจคนละฐานถูกเอามาเทียบกันผิด */}
+      {subText && <text x={cx} y={cy - 2} textAnchor="middle" style={{ fontSize: 9.5, fontWeight: 600, fill: 'var(--ink-4)' }}>{subText}</text>}
+      {/* ตัวชี้ = สามเหลี่ยมเล็กใต้โค้ง ชี้ออกไปที่โซน (แบบภาพอ้างอิง) — ไม่ลากเส้นผ่านตัวเลขกลางเกจ */}
+      <polygon points={`${cx + (r - w / 2 - 3) * Math.cos(na)},${cy + (r - w / 2 - 3) * Math.sin(na)} ${cx + (r - w / 2 - 16) * Math.cos(na - 0.09)},${cy + (r - w / 2 - 16) * Math.sin(na - 0.09)} ${cx + (r - w / 2 - 16) * Math.cos(na + 0.09)},${cy + (r - w / 2 - 16) * Math.sin(na + 0.09)}`} fill="var(--ink)" style={{ transition: 'all .6s ease' }} />
+    </svg>
+  );
+}
+
 // ---- เลขนับวิ่ง (count-up) ด้วย requestAnimationFrame · ease-out · เคารพ prefers-reduced-motion ----
 export function useCountUp(target, { duration = 900, decimals = 0 } = {}) {
   const end = Number(target) || 0;
@@ -194,8 +224,17 @@ export function useCountUp(target, { duration = 900, decimals = 0 } = {}) {
     const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const from = fromRef.current;
     if (reduce || from === end || duration <= 0) { fromRef.current = end; setVal(end); return; }
-    let raf, start = null;
+    // แท็บที่ถูกซ่อน/ย่อ = requestAnimationFrame ไม่ทำงาน → เดิมเลขค้างที่ค่าเก่าถาวร
+    // (เจอจริงตอนเปลี่ยนช่วงวันแล้วการ์ด "ออเดอร์" ค้าง 473 ทั้งที่ค่าจริง 4,761)
+    if (typeof document !== 'undefined' && document.hidden) {
+      fromRef.current = end;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- ตั้งค่าจริงทันทีเมื่อ animate ไม่ได้ (แท็บซ่อน) · ไม่เกิดลูกโซ่ (deps = ค่าเป้าหมายล้วน)
+      setVal(end);
+      return;
+    }
+    let raf, start = null, guard;
     const m = Math.pow(10, decimals);
+    const done = () => { fromRef.current = end; setVal(end); };
     const step = (ts) => {
       if (start == null) start = ts;
       const p = Math.min(1, (ts - start) / duration);
@@ -205,7 +244,8 @@ export function useCountUp(target, { duration = 900, decimals = 0 } = {}) {
       else fromRef.current = end;
     };
     raf = requestAnimationFrame(step);
-    return () => raf && cancelAnimationFrame(raf);
+    guard = setTimeout(done, duration + 400);   // กันเฟรมไม่มา (แท็บพื้นหลัง/เครื่องหน่วง) → เลขต้องลงที่ค่าจริงเสมอ
+    return () => { if (raf) cancelAnimationFrame(raf); clearTimeout(guard); };
   }, [end, duration, decimals]);
   return val;
 }
@@ -306,6 +346,129 @@ export function StackedBars({ labels, datasets, height = 230, fmt, ariaLabel = '
           <Bar key={i} dataKey={`d${i}`} name={d.label} stackId="a" fill={d.color || CAT_COLORS[i % CAT_COLORS.length]} radius={i === ds.length - 1 ? [2, 2, 0, 0] : 0} maxBarSize={40} />
         ))}
       </BarChart>
+    </ChartContainer>
+  );
+}
+
+// ---- ยอดขายรายวัน (รายงานขาย · รื้อใหม่): แท่งซ้อนสีตามช่องทาง + เส้นประอ้างอิง (เฉลี่ยช่วงก่อน) · คลิกแท่ง ----
+// tooltip: วันที่ + จำนวนออเดอร์ · ช่องทางเรียงมาก→น้อย (ยอด + %) · รวม · hint คลิกดูออเดอร์
+function DailyTip({ active, payload, label, fmt = B, clickable, prevLabel = 'ช่วงก่อน', ordersLabel = 'ออเดอร์', ordersFmt = N, emptyText = 'ไม่มียอดขาย', clickText = 'คลิกเพื่อดูออเดอร์ทั้งวัน', extra }) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0]?.payload || {};
+  const channels = payload.filter(c => String(c.dataKey || '').startsWith('d')).map(c => ({ name: c.name, value: Number(c.value) || 0, color: c.color || c.payload?.fill })).filter(c => c.value > 0).sort((a, b) => b.value - a.value);
+  const total = channels.reduce((s, c) => s + c.value, 0);
+  return (
+    <div className="min-w-[12rem] rounded-lg border bg-background px-2.5 py-2 text-xs shadow-md">
+      <div className="mb-1.5 flex items-center justify-between gap-3"><span className="font-semibold text-foreground">{row._tip || label}</span>{row._orders != null && <span className="tabular-nums text-muted-foreground">{ordersLabel} {ordersFmt(row._orders)}</span>}</div>
+      {channels.map((c, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="inline-block size-2.5 shrink-0 rounded-[3px]" style={{ background: c.color }} />
+          <span className="flex-1 text-muted-foreground">{c.name}</span>
+          <span className="font-semibold tabular-nums text-foreground">{fmt(c.value)}</span>
+          <span className="w-9 text-right tabular-nums text-muted-foreground">{total ? Math.round(c.value / total * 100) : 0}%</span>
+        </div>
+      ))}
+      {channels.length === 0 && <div className="text-muted-foreground">{emptyText}</div>}
+      {channels.length > 1 && <div className="mt-1.5 flex items-center justify-between border-t pt-1"><span className="text-muted-foreground">รวม</span><span className="font-semibold tabular-nums text-foreground">{fmt(total)}</span></div>}
+      {row._prev != null && <div className="mt-1 flex items-center justify-between gap-3"><span className="text-muted-foreground">{prevLabel} วันเดียวกัน</span><span className="tabular-nums"><span className="text-muted-foreground">{fmt(row._prev)}</span> <span className="font-semibold" style={{ color: total >= row._prev ? 'var(--good)' : 'var(--bad)' }}>{(total >= row._prev ? '+' : '−') + fmt(Math.abs(total - row._prev))}</span></span></div>}
+      {extra && extra(row, total)}
+      {clickable && total > 0 && <div className="mt-1.5 text-[10px] text-muted-foreground">{clickText}</div>}
+    </div>
+  );
+}
+// ป้ายแกน x ของกราฟรายวัน: วันหยุดจางลง (ข้อมูลเดียวกับแรเงา — ไม่ใช่สีอย่างเดียว) · render function ระดับโมดูล (ไม่สร้าง component ใน render)
+const renderWeTick = ({ x, y, payload, index }, rows) => (
+  <text x={x} y={y + 12} textAnchor="middle" fontSize={11} fill={rows[index]?._we ? 'var(--ink-4)' : 'var(--ink-3)'} opacity={rows[index]?._we ? 0.85 : 1}>{payload.value}</text>
+);
+// weekend = boolean[] ต่อ bucket (เสาร์/อาทิตย์ → แรเงาพื้นหลัง + ป้ายวันจาง) · showOrders = เส้นออเดอร์/วัน บนแกนขวา (ป้าย "ออเดอร์")
+// prevValues = ยอดช่วงก่อน ณ ลำดับวันเดียวกัน (เส้นประ แกนซ้าย) — ใช้แทนเส้นเฉลี่ยแบน (user: "กราฟเดือนที่แล้ว" ต้องดูเทียบวันต่อวันได้)
+export function DailySalesChart({ labels, tipLabels, datasets, orders, weekend, prevValues, prevLabel = 'ช่วงก่อน', showOrders = true, refValue, rightRef, height = 250, fmt, axisFmt, ordersLabel = 'ออเดอร์', ordersFmt, emptyText, clickText, tipExtra, ariaLabel = 'กราฟยอดขายรายวัน', onBarClick }) {
+  const ds = datasets || [];
+  const hasPrev = Array.isArray(prevValues) && prevValues.some(v => v > 0);
+  const chartData = (labels || []).map((label, i) => {
+    const row = { label, _tip: tipLabels ? tipLabels[i] : label, _orders: orders ? orders[i] : null, _we: !!(weekend && weekend[i]), _prev: hasPrev && prevValues[i] != null ? prevValues[i] : null };
+    ds.forEach((d, j) => { row[`d${j}`] = d.data[i]; });
+    return row;
+  });
+  const n = chartData.length;
+  const hasOrders = showOrders && Array.isArray(orders) && orders.some(v => v > 0);
+  const weIdx = chartData.map((r, i) => (r._we ? i : -1)).filter(i => i >= 0);
+  return (
+    <ChartContainer config={mkCfg([...ds.map((d, i) => [`d${i}`, d.label]), ['_orders', ordersLabel], ['_prev', prevLabel]])} className={CC_CLS} style={{ height }}>
+      <ComposedChart data={chartData} margin={{ top: 8, right: hasOrders ? 4 : 8, bottom: 0, left: 0 }} aria-label={ariaLabel} barCategoryGap={n > 16 ? '24%' : '32%'}
+        style={onBarClick ? { cursor: 'pointer' } : undefined}
+        onClick={onBarClick ? (st) => { const i = st?.activeTooltipIndex; if (i != null && i >= 0) onBarClick(i); } : undefined}>
+        <CartesianGrid {...GRID} vertical={false} />
+        {/* แรเงาวันหยุด (เสาร์/อาทิตย์) — เห็นแพตเทิร์นวันหยุดทันที */}
+        {weIdx.map(i => <ReferenceArea key={'we' + i} yAxisId="l" x1={chartData[i].label} x2={chartData[i].label} fill="rgba(130,140,160,.09)" stroke="none" ifOverflow="visible" />)}
+        <XAxis dataKey="label" tick={weekend ? (tp) => renderWeTick(tp, chartData) : TICK} {...AXP} interval={n <= 31 ? 0 : 'preserveStartEnd'} minTickGap={6} />
+        <YAxis yAxisId="l" tickFormatter={axisFmt || KFMT} tick={TICK} {...AXP} width={52} allowDecimals={false} />
+        {hasOrders && <YAxis yAxisId="r" orientation="right" tick={TICK} {...AXP} width={44} allowDecimals={!!ordersFmt} tickFormatter={ordersFmt}
+          label={{ value: ordersLabel, angle: 90, position: 'insideRight', fill: 'var(--ink-4)', fontSize: 10, offset: -2 }} />}
+        <ChartTooltip cursor={{ fill: 'rgba(130,140,160,.10)' }} content={<DailyTip fmt={fmt || B} clickable={!!onBarClick} prevLabel={prevLabel} ordersLabel={ordersLabel} ordersFmt={ordersFmt || N} emptyText={emptyText} clickText={clickText} extra={tipExtra} />} />
+        {ds.map((d, i) => (
+          <Bar key={i} yAxisId="l" dataKey={`d${i}`} name={d.label} stackId="a" fill={d.color || CAT_COLORS[i % CAT_COLORS.length]} radius={i === ds.length - 1 ? [3, 3, 0, 0] : 0} maxBarSize={44} isAnimationActive={false} />
+        ))}
+        {/* เส้นประ = ช่วงก่อน ณ วันเดียวกัน (แกนซ้าย) — user เลือกเส้นประ (ไม่เอาขีดสั้น) */}
+        {hasPrev && <Line yAxisId="l" type="monotone" dataKey="_prev" name={prevLabel} stroke="var(--accent-2)" strokeWidth={1.7} strokeDasharray="5 4" dot={false} activeDot={{ r: 3.5 }} isAnimationActive={false} connectNulls />}
+        {/* เส้นออเดอร์/วัน — แกนขวา สีเข้มกลาง จุดเล็ก ไม่แย่งแท่ง */}
+        {hasOrders && <Line yAxisId="r" type="monotone" dataKey="_orders" name={ordersLabel} stroke="var(--ink-3)" strokeWidth={1.6} dot={{ r: 2.4, fill: 'var(--surface)', stroke: 'var(--ink-3)', strokeWidth: 1.5 }} activeDot={{ r: 4 }} isAnimationActive={false} connectNulls />}
+        {/* เส้นอ้างอิง — ไม่มีป้ายในกราฟ (ทับแท่ง) · ความหมาย/ตัวเลขอยู่ใน legend ใต้กราฟ */}
+        {refValue > 0 && <ReferenceLine yAxisId="l" y={refValue} stroke="var(--ink-3)" strokeDasharray="5 4" strokeWidth={1.4} ifOverflow="extendDomain" />}
+        {hasOrders && rightRef > 0 && <ReferenceLine yAxisId="r" y={rightRef} stroke="var(--good)" strokeDasharray="3 3" strokeWidth={1.2} ifOverflow="extendDomain" />}
+      </ComposedChart>
+    </ChartContainer>
+  );
+}
+
+// ---- กราฟสะสมเทียบเดือนก่อน (hero รายงานขาย): เส้นสะสมช่วงนี้ (ทึบ) vs ช่วงก่อน (ประ) บนแกน "วันที่ N ของช่วง" ----
+// cur/prev = ยอดต่อ bucket (ไม่ใช่สะสม — คำนวณสะสมในนี้) · prev ยาวกว่า cur ได้ (เดือนก่อนเต็มเดือน) · todayIdx = index ของวันนี้ (เส้นแนวตั้งจาง)
+function CumTip({ active, payload, label, fmt = B, curLabel, prevLabel }) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0]?.payload || {};
+  const c = row.cur, p = row.prev;
+  return (
+    <div className="min-w-[11rem] rounded-lg border bg-background px-2.5 py-2 text-xs shadow-md">
+      <div className="mb-1 font-semibold text-foreground">{row._tip || label}</div>
+      {c != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">สะสม {curLabel}</span><span className="font-semibold tabular-nums" style={{ color: 'var(--accent)' }}>{fmt(c)}</span></div>}
+      {p != null && <div className="flex justify-between gap-3"><span className="text-muted-foreground">สะสม {prevLabel}</span><span className="font-semibold tabular-nums text-muted-foreground">{fmt(p)}</span></div>}
+      {c != null && p != null && <div className="mt-1 flex justify-between gap-3 border-t pt-1"><span className="text-muted-foreground">ส่วนต่าง</span><span className="font-semibold tabular-nums" style={{ color: c >= p ? 'var(--good)' : 'var(--bad)' }}>{(c >= p ? '+' : '−') + fmt(Math.abs(c - p))}</span></div>}
+    </div>
+  );
+}
+export function CumulativeCompare({ cur = [], prev = null, labels = [], tipLabels, curLabel = 'ช่วงนี้', prevLabel = 'ช่วงก่อน', todayIdx = -1, height = 180, fmt, ariaLabel = 'กราฟยอดสะสมเทียบช่วงก่อน' }) {
+  const n = Math.max(cur.length, prev ? prev.length : 0);
+  const data = []; let cc = 0, pc = 0;
+  for (let i = 0; i < n; i++) {
+    const hasC = i < cur.length, hasP = prev && i < prev.length;
+    if (hasC) cc += Number(cur[i]) || 0;
+    if (hasP) pc += Number(prev[i]) || 0;
+    data.push({ label: labels[i] != null ? labels[i] : String(i + 1), _tip: tipLabels ? tipLabels[i] : (labels[i] != null ? labels[i] : `วันที่ ${i + 1}`), cur: hasC ? cc : null, prev: hasP ? pc : null });
+  }
+  if (!n) return <div style={{ height }} />;
+  const curEnd = cur.length ? data[cur.length - 1] : null;
+  const prevEnd = prev && prev.length ? data[prev.length - 1] : null;
+  const prevSame = prev && cur.length ? data[Math.min(cur.length, prev.length) - 1] : null;
+  const ahead = curEnd && prevSame && prevSame.prev != null ? curEnd.cur >= prevSame.prev : null;
+  const curColor = ahead == null ? 'var(--accent)' : ahead ? 'var(--good)' : 'var(--accent)';
+  // ป้ายแกน x: ทุก 5 (1,5,10,…) + ตัวสุดท้าย — ไม่แน่น
+  const ticks = data.filter((d, i) => i === 0 || (i + 1) % 5 === 0 || (i === n - 1 && n % 5 >= 3)).map(d => d.label);
+  return (
+    <ChartContainer config={mkCfg([['cur', curLabel], ['prev', prevLabel]])} className={CC_CLS} style={{ height }}>
+      <ComposedChart data={data} margin={{ top: 18, right: 16, bottom: 0, left: 0 }} aria-label={ariaLabel}>
+        <CartesianGrid {...GRID} vertical={false} />
+        <XAxis dataKey="label" tick={TICK} {...AXP} ticks={ticks} interval={0} />
+        <YAxis tickFormatter={KFMT} tick={TICK} {...AXP} width={52} />
+        <ChartTooltip cursor={{ stroke: 'var(--ink-4)', strokeDasharray: '3 3' }} content={<CumTip fmt={fmt || B} curLabel={curLabel} prevLabel={prevLabel} />} />
+        {prev && <Area type="monotone" dataKey="prev" name={prevLabel} stroke="var(--ink-4)" strokeWidth={1.6} strokeDasharray="5 4" fill="transparent" dot={false} isAnimationActive={false} connectNulls={false} />}
+        <Area type="monotone" dataKey="cur" name={curLabel} stroke={curColor} strokeWidth={2.6} fill={curColor} fillOpacity={0.10} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} connectNulls={false} />
+        {/* ปลายเส้น = จุดเปล่า — ป้าย "ชื่อเดือน + ตัวเลข" ถูกเอาออก (user 24 ส.ค.: รก)
+            ชื่อเส้นอ่านได้จาก legend เหนือกราฟ · ตัวเลขดูได้จาก tooltip ตอน hover */}
+        {curEnd && <ReferenceDot x={curEnd.label} y={curEnd.cur} r={4} fill={curColor} stroke="var(--surface)" strokeWidth={2} />}
+        {prevEnd && prevEnd.prev != null && <ReferenceDot x={prevEnd.label} y={prevEnd.prev} r={3} fill="var(--ink-4)" stroke="var(--surface)" strokeWidth={2} />}
+        {prevSame && prevSame !== prevEnd && prevSame.prev != null && <ReferenceDot x={prevSame.label} y={prevSame.prev} r={3} fill="var(--ink-4)" stroke="var(--surface)" strokeWidth={2} />}
+        {todayIdx >= 0 && data[todayIdx] && <ReferenceLine x={data[todayIdx].label} stroke="var(--ink-4)" strokeDasharray="2 3" strokeWidth={1} label={{ value: 'วันนี้', position: 'top', fill: 'var(--ink-4)', fontSize: 10 }} />}
+      </ComposedChart>
     </ChartContainer>
   );
 }

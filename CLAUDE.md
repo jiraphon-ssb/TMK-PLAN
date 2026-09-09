@@ -33,6 +33,14 @@
 ## สิทธิ์ (RBAC)
 - role: `admin` / `editor` / `viewer` (จาก `tmk_user_roles`) · viewer = ดูอย่างเดียว
 - **ล็อกหน้ารายคน** = `locked_sections` (composite key `section:sub`) · admin = ปลดล็อกเสมอ
+- **ขอบเขตการมองเห็นข้อมูลลูกค้า — ตัดสินแล้ว 8 ก.ย. 69 (อย่าไป "แก้" อีก)**
+  | หน้า | เห็นอะไร |
+  |---|---|
+  | ออเดอร์ · ประสิทธิภาพเซลล์ · ⌘K | **เฉพาะของตัวเอง** (`orderVisibleTo`) · admin เห็นทั้งทีม |
+  | **ภาพรวม CRM** | **เห็นทั้งทีม ทุก role** — ตั้งใจ เพราะเป็นแดชบอร์ดระดับทีม แนวเดียวกับ "ภาพรวมทีม" ในประสิทธิภาพเซลล์ |
+  | **popup "วันที่ …" ที่กดจากกราฟภาพรวมทีม** (ประสิทธิภาพเซลล์) | **เห็นทั้งทีม ทุก role** — ยอด · ออเดอร์ทุกใบ (รวมชื่อ/เบอร์ลูกค้าของเซลล์คนอื่น) · คนทักรายคน · %ปิด — **user สั่งเอง 9 ก.ย. 69 ("แค่ในนี้นะ")** เป็นข้อยกเว้นตั้งใจ ไม่ใช่บั๊ก · เดิมปิดปุ่มกดทิ้ง = เซลล์กดแล้วเงียบ · ล็อกด้วย `src/__tests__/dayDetailScope-dom.test.jsx` |
+  | ตารางรายคน (เป้า/คอม) · **ชิป %เป้า ในอันดับเซลล์หน้าแรก** · บันทึกกิจกรรม | **admin เท่านั้น** (ค่าตอบแทนรายบุคคล) — ยอดขายรายคนยังเห็นได้ทุก role |
+  รอบตรวจอัตโนมัติจะรายงาน CRM ว่า "ไม่กรองสิทธิ์" ทุกครั้ง — **เป็นการตัดสินใจ ไม่ใช่บั๊ก**
 - ⚠️ ณ ตอนนี้สิทธิ์บังคับฝั่ง browser เป็นหลัก + RLS Tier 1/2 (ทุกตาราง authenticated · เขียน role/staff = admin) · **Tier 3** (write=non-viewer · delete=admin · audit immutable) อยู่ใน `supabase/migrations/*rls-tier3*` — ต้องรีวิว+รันเอง
 
 ## กติกาการทำงาน (สำคัญ)
@@ -40,6 +48,9 @@
 - **ห้ามแตะ/stage `.claude/launch.json`** (ไฟล์ dev ของ user)
 - **ห้าม commit `supabase/functions/daily-sale-report/index.ts`** (งาน edge fn ของ user — `git restore --staged` ก่อน commit เสมอ)
 - **Edge functions ไม่มี CLI** — deploy ผ่าน Supabase Dashboard เอง (`daily-sale-report`/`line-broadcast`/`ai-extract`)
+  - **แก้ `_shared/saleFormulas.js` แล้วต้อง `npm run build:edge` + paste ลง Dashboard ทุกครั้ง** ไม่งั้นเลขเว็บ ≠ รายงาน LINE
+  - ⚠️ **CI จับให้ไม่ได้** — `dist-edge/` อยู่ใน `.gitignore` และ `index.ts` มักมีของแก้ค้างในเครื่อง
+    CI ตรวจได้แค่ "บันเดิล build ผ่าน + มีสูตรครบ" ส่วน "ลืม paste" ต้องอาศัยวินัยคน
 - **Migrations user รันเอง** ใน Supabase (ไม่มี migration runner อัตโนมัติ) · ทุกไฟล์ RLS ต้องมี block VERIFY + ROLLBACK + idempotent
 - **หลังรัน migration ทุกครั้ง จดด้วย** `select public.tmk_migration_applied('<ชื่อไฟล์>.sql');` (ตาราง `tmk_migrations`) · ดูที่รันแล้ว: `select * from public.tmk_migrations order by applied_at desc;`
 - **ห้ามใส่ `alter table ... disable row level security` ในไฟล์ migration** (ของเก่าถูกคอมเมนต์ปลดชนวนไปแล้ว — รันซ้ำจะปิด RLS เงียบๆ)

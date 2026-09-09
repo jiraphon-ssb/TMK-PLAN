@@ -30,3 +30,9 @@ dist-ssr
 # Local Codex CLI config (ไม่ commit)
 .codex/
 dist-edge/
+
+# เทส E2E (บัญชีเทส)
+.env.e2e
+e2e/.auth/
+test-results/
+playwright-report/

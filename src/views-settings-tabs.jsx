@@ -5,24 +5,28 @@
    ============================================================ */
 import React, { useState, useEffect, useMemo } from 'react';
 import { Icon } from './components.jsx';
+import { ReorderButtons } from './components/ReorderButtons.jsx';
 import { useData } from './dataContext.jsx';
 import { MonthPicker } from './components/MonthPicker.jsx';
 import { supabase } from './lib/supabaseClient.js';
 import { logAudit, diffFields } from './lib/audit.js';
 import { fetchTargets, saveTarget } from './lib/targets.js';
 import { normCutoffDay, DEFAULT_CUTOFF_DAY } from './lib/commissionCycle.js';
+import { MonthTargetsZone } from './settingsMonthTargets.jsx'; // PART 103 D13: เป้าเดือน+ต่อช่องทาง ย้ายมาจากหน้ายอดขาย
 import { fetchCrmTargets, saveCrmTarget } from './lib/crmTargets.js';
-import { APP_VERSION } from './changelog.js';
+import { APP_VERSION } from './appVersion.js';   // ไม่ดึง changelog.js เข้ามา (ก้อนใหญ่)
 import { todayISO } from './lib/dateUtils.js';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Switch as ShadcnSwitch } from '@/components/ui/switch';
+import { Card, CardContent } from '@/components/ui/card';
+import { SearchInput } from '@/components/ui/search-input';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from './components/MoneyInput.jsx';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { DD, guardEdit, guardAdmin } from './saleWidgets.jsx';
-import { toast, confirm, openModal } from './lib/appBus.js';
+import { TRASH_TABLES, needsAdminToPurge, purgeWarning } from './lib/trashTables.js';
+import { toast, confirm, openModal, goSection, userEmail, isAdmin, canEdit } from './lib/appBus.js';
 
 export function CampaignsView() {
   const { reload, refresh } = useData() || {};
@@ -100,10 +104,10 @@ export function CampaignsView() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
+    <div className="flex flex-col gap-4 w-full">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="text-sm text-muted-foreground font-medium">
-          {campaigns.length} แคมเปญ · เรียงลำดับได้ (ลากบนคอม / ปุ่ม ▲▼ บนมือถือ)
+          {campaigns.length} แคมเปญ · เรียงลำดับด้วยปุ่มลูกศร หรือลากการ์ด
         </div>
         <Button onClick={() => openModal('campaign')}>
           <Icon name="plus" className="size-4 mr-2" /> สร้างแคมเปญ
@@ -168,17 +172,8 @@ export function CampaignsView() {
                 {/* หัวการ์ด: handle + ชื่อเต็ม + ป้ายสถานะ */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex gap-2 min-w-0 flex-1">
-                    <div className="hidden sm:flex shrink-0 text-muted-foreground/40 mt-0.5" title="ลากเพื่อเรียงลำดับ">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                        <circle cx="9" cy="6" r="1.5" fill="currentColor" /><circle cx="9" cy="12" r="1.5" fill="currentColor" /><circle cx="9" cy="18" r="1.5" fill="currentColor" />
-                        <circle cx="15" cy="6" r="1.5" fill="currentColor" /><circle cx="15" cy="12" r="1.5" fill="currentColor" /><circle cx="15" cy="18" r="1.5" fill="currentColor" />
-                      </svg>
-                    </div>
-                    {/* สำหรับมือถือ */}
-                    <div className="flex sm:hidden flex-col gap-1 shrink-0 mt-0.5" onClick={e => e.stopPropagation()}>
-                      <button className="text-muted-foreground disabled:opacity-30 p-0.5 text-[10px] leading-none" disabled={idx === 0 || busy} onClick={() => reorderCampaign(c.id, campaigns[idx - 1].id)}>▲</button>
-                      <button className="text-muted-foreground disabled:opacity-30 p-0.5 text-[10px] leading-none" disabled={idx === campaigns.length - 1 || busy} onClick={() => reorderCampaign(c.id, campaigns[idx + 1].id)}>▼</button>
-                    </div>
+                    <ReorderButtons label={c.name} index={idx} total={campaigns.length} disabled={busy}
+                      onMove={(d) => reorderCampaign(c.id, campaigns[idx + d].id)} />
                     <h3 className="font-bold text-[15px] leading-snug line-clamp-2 hover:underline cursor-pointer min-w-0 flex-1" title={c.name} onClick={() => openModal('campaign', { ...c, channels: c.channels || [] })}>
                       {c.name}
                     </h3>
@@ -291,7 +286,7 @@ export function TargetsView() {
     const [targets, crmTargets] = await Promise.all([fetchTargets(month), fetchCrmTargets(month)]);
     const map = {};
     targets.forEach(t => { map[t.salesperson] = { ...(map[t.salesperson] || {}), sales_target: t.sales_target ?? 0, commission_rate: t.commission_rate ?? 0 }; });
-    crmTargets.forEach(t => { map[t.salesperson] = { ...(map[t.salesperson] || {}), crm_target: t.sales_target ?? 0 }; });
+    crmTargets.forEach(t => { map[t.salesperson] = { ...(map[t.salesperson] || {}), crm_target: t.sales_target ?? 0, calls_target: t.calls_target ?? 0, answer_rate_target: t.answer_rate_target ?? 0 }; });
     // เป้าที่บันทึกไว้แต่คนนั้นยังไม่ส่งใบเสร็จเดือนนี้ → orphan (โผล่เมื่อกด "แสดง" · กันเป้าหาย · รวมคนที่ตั้งแต่เป้า CRM)
     const orphans = [...new Set([...targets.map(t => t.salesperson), ...crmTargets.map(t => t.salesperson)].filter(n => n && !recSet.has(n)))];
     setReceiptNames([...recSet]);
@@ -310,9 +305,8 @@ export function TargetsView() {
     return [...s].sort((a, b) => a.localeCompare(b, 'th'));
   }, [receiptNames, manualNames, orphanNames, showOrphans]);
 
-  const isDirty = (name) => numOf(rows[name], 'sales_target') !== numOf(baseline[name], 'sales_target')
-    || numOf(rows[name], 'commission_rate') !== numOf(baseline[name], 'commission_rate')
-    || numOf(rows[name], 'crm_target') !== numOf(baseline[name], 'crm_target');
+  const isDirty = (name) => ['sales_target', 'commission_rate', 'crm_target', 'calls_target', 'answer_rate_target']
+    .some(f => numOf(rows[name], f) !== numOf(baseline[name], f));
   const dirtyNames = people.filter(isDirty);
 
   const setField = (name, field, val) => setRows(p => ({ ...p, [name]: { ...(p[name] || {}), [field]: val } }));
@@ -326,17 +320,19 @@ export function TargetsView() {
       return false;
     }
     // เป้า CRM แยกตาราง (tmk_crm_targets) — บันทึกเฉพาะเมื่อเปลี่ยน · ตารางยังไม่ migrate → toast ชี้ migration
-    if (numOf(r, 'crm_target') !== numOf(baseline[name], 'crm_target')) {
-      const { error: ce } = await saveCrmTarget({ salesperson: name, month, sales_target: r.crm_target });
+    const crmChanged = ['crm_target', 'calls_target', 'answer_rate_target'].some(f => numOf(r, f) !== numOf(baseline[name], f));
+    if (crmChanged) {
+      const { error: ce, degraded } = await saveCrmTarget({ salesperson: name, month, sales_target: r.crm_target, calls_target: r.calls_target, answer_rate_target: r.answer_rate_target });
+      if (degraded) toast('เป้ายอด CRM บันทึกแล้ว · เป้ากิจกรรมยังไม่ถูกเก็บ — ต้องรัน migration 20260824-crm-activity-targets.sql', 'warn');
       if (ce) {
         const miss = /relation .* does not exist|tmk_crm_targets|schema cache/i.test(ce.message || '');
         toast(miss ? 'ต้องรัน migration 20260731-crm-targets-notes.sql ใน Supabase ก่อน' : 'บันทึกเป้า CRM ไม่สำเร็จ: ' + ce.message, 'error');
         return false;
       }
     }
-    const tChanges = diffFields(baseline[name], { sales_target: numOf(r, 'sales_target'), commission_rate: numOf(r, 'commission_rate'), crm_target: numOf(r, 'crm_target') }, [['sales_target', 'เป้ายอด'], ['commission_rate', 'เรตคอม %'], ['crm_target', 'เป้า CRM']]);
+    const tChanges = diffFields(baseline[name], { sales_target: numOf(r, 'sales_target'), commission_rate: numOf(r, 'commission_rate'), crm_target: numOf(r, 'crm_target'), calls_target: numOf(r, 'calls_target'), answer_rate_target: numOf(r, 'answer_rate_target') }, [['sales_target', 'เป้ายอด'], ['commission_rate', 'เรตคอม %'], ['crm_target', 'เป้า CRM'], ['calls_target', 'เป้าสาย/เดือน'], ['answer_rate_target', 'เป้า %รับสาย']]);
     logAudit({ action: 'update', entityType: 'target', entityName: name, summary: `ตั้งเป้า/คอม ${name} เดือน ${month}`, changes: tChanges.length ? tChanges : null });
-    setBaseline(b => ({ ...b, [name]: { sales_target: numOf(r, 'sales_target'), commission_rate: numOf(r, 'commission_rate'), crm_target: numOf(r, 'crm_target') } }));
+    setBaseline(b => ({ ...b, [name]: { sales_target: numOf(r, 'sales_target'), commission_rate: numOf(r, 'commission_rate'), crm_target: numOf(r, 'crm_target'), calls_target: numOf(r, 'calls_target'), answer_rate_target: numOf(r, 'answer_rate_target') } }));
     return true;
   };
 
@@ -358,6 +354,30 @@ export function TargetsView() {
     for (const name of dirtyNames) { if (await persist(name)) ok++; }
     setSavingAll(false);
     if (ok) toast(`บันทึกเป้า ${ok} คน เดือนนี้แล้ว`, 'success');
+  };
+
+  // คัดลอกเป้ารายคนจากเดือนก่อน (เดิมต้องพิมพ์ใหม่ทุกเดือน)
+  const [copyingPeople, setCopyingPeople] = useState(false);
+  const copyPrevPeople = async () => {
+    if (copyingPeople) return;
+    setCopyingPeople(true);
+    try {
+      const [y, m] = month.split('-').map(Number);
+      const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+      const [pt, pc] = await Promise.all([fetchTargets(pm), fetchCrmTargets(pm)]);
+      if (!pt.length && !pc.length) { toast(`เดือนก่อนยังไม่ได้ตั้งเป้ารายคน`, 'warn'); return; }
+      const add = new Set();
+      setRows(prev => {
+        const next = { ...prev };
+        pt.forEach(t => { next[t.salesperson] = { ...(next[t.salesperson] || {}), sales_target: t.sales_target ?? 0, commission_rate: t.commission_rate ?? 0 }; add.add(t.salesperson); });
+        // เป้า CRM ต้องลอกครบทั้ง 3 ช่อง (เดิมลอกแค่ยอด → เป้าจำนวนสาย/อัตรารับสายหายทุกเดือน)
+        pc.forEach(t => { next[t.salesperson] = { ...(next[t.salesperson] || {}), crm_target: t.sales_target ?? 0, calls_target: t.calls_target ?? 0, answer_rate_target: t.answer_rate_target ?? 0 }; add.add(t.salesperson); });
+        return next;
+      });
+      setManualNames(p => [...new Set([...p, ...add])]);
+      toast(`คัดลอกเป้า ${add.size} คนจากเดือนก่อนแล้ว — กด "บันทึก" เพื่อยืนยัน`, 'success');
+    } catch (e) { toast('คัดลอกไม่สำเร็จ: ' + (e?.message || ''), 'error'); }
+    finally { setCopyingPeople(false); }
   };
 
   const addPerson = () => {
@@ -384,6 +404,16 @@ export function TargetsView() {
           </span>
         </div>
 
+        {/* เป้าเดือน + เป้า/งบแอดต่อช่องทาง (ตามเดือนที่เลือกด้านบน · D13) */}
+        <MonthTargetsZone month={month} />
+
+        <div className="flex items-center gap-2 -mb-1">
+          <span className="text-[11px] text-muted-foreground">เป้ารายคน & คอมมิชชั่น</span>
+          <button type="button" onClick={copyPrevPeople} disabled={copyingPeople}
+            className="ml-auto text-[11.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50">
+            {copyingPeople ? 'กำลังคัดลอก…' : 'คัดลอกจากเดือนก่อน'}
+          </button>
+        </div>
         {loading ? (
           <p className="text-sm text-muted-foreground py-6 text-center">กำลังโหลด…</p>
         ) : people.length === 0 ? (
@@ -391,8 +421,8 @@ export function TargetsView() {
         ) : (
           <div className="rounded-lg border overflow-hidden">
             {/* หัวคอลัมน์ */}
-            <div className="grid grid-cols-[minmax(72px,1.1fr)_1fr_76px_1fr] gap-2 items-center px-3 py-1.5 bg-muted/40 text-[11px] text-muted-foreground">
-              <span>เซลล์</span><span className="text-right">เป้ายอด (บาท)</span><span className="text-right">คอม %</span><span className="text-right">เป้า CRM (บาท)</span>
+            <div className="grid grid-cols-[minmax(72px,1.1fr)_1fr_84px_1fr_minmax(72px,90px)] gap-2 items-center px-3 py-1.5 bg-muted/40 text-[11px] text-muted-foreground">
+              <span>เซลล์</span><span className="text-right">เป้ายอด (บาท)</span><span className="text-right">คอม %</span><span className="text-right">เป้า CRM (บาท)</span><span className="text-right">คอมที่เป้า</span>
             </div>
             <div className="divide-y">
               {people.map(name => {
@@ -400,22 +430,55 @@ export function TargetsView() {
                 const dirty = isDirty(name);
                 return (
                   <div key={name} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) saveIfDirty(name); }}
-                    className="grid grid-cols-[minmax(72px,1.1fr)_1fr_76px_1fr] gap-2 items-center px-3 py-1.5">
+                    className="grid grid-cols-[minmax(72px,1.1fr)_1fr_84px_1fr_minmax(72px,90px)] gap-2 items-center px-3 py-1.5">
                     <span className="text-sm font-medium truncate inline-flex items-center gap-1.5">
                       {name}
                       {savingKey === name ? <span className="size-2 rounded-full bg-[var(--accent)] animate-pulse shrink-0" title="กำลังบันทึก" />
                         : savedKey === name ? <Icon name="check" className="size-3.5 text-emerald-600 shrink-0" />
                         : dirty ? <span className="size-2 rounded-full bg-amber-500 shrink-0" title="ยังไม่บันทึก — ออกจากแถวแล้วบันทึกเอง" /> : null}
                     </span>
-                    <Input type="number" inputMode="numeric" value={r.sales_target ?? ''} onChange={e => setField(name, 'sales_target', e.target.value)} className="h-8 text-right min-w-0" placeholder="0" />
-                    <Input type="number" inputMode="decimal" step="0.1" value={r.commission_rate ?? ''} onChange={e => setField(name, 'commission_rate', e.target.value)} className="h-8 text-right min-w-0" placeholder="0" />
-                    <Input type="number" inputMode="numeric" value={r.crm_target ?? ''} onChange={e => setField(name, 'crm_target', e.target.value)} className="h-8 text-right min-w-0" placeholder="0" />
+                    <MoneyInput value={r.sales_target ?? ''} onChange={e => setField(name, 'sales_target', e.target.value)} className="h-8 min-w-0" placeholder="0" aria-label={`เป้ายอดของ ${name}`} />
+                    <Input type="number" inputMode="decimal" step="0.1" value={r.commission_rate ?? ''} onChange={e => setField(name, 'commission_rate', e.target.value)} className="h-8 text-right min-w-0" placeholder="0" aria-label={`เรตคอมของ ${name} (%)`} />
+                    <MoneyInput value={r.crm_target ?? ''} onChange={e => setField(name, 'crm_target', e.target.value)} className="h-8 min-w-0" placeholder="0" aria-label={`เป้า CRM ของ ${name}`} />
+                    {/* คอมที่ได้ถ้าทำถึงเป้า — เดิมต้องคิดเองว่า เป้า × เรต = เท่าไหร่ */}
+                    <span className="text-right text-[12px] tabular-nums text-muted-foreground">
+                      {numOf(r, 'sales_target') > 0 && numOf(r, 'commission_rate') > 0
+                        ? '฿' + Math.round(numOf(r, 'sales_target') * numOf(r, 'commission_rate') / 100).toLocaleString('th-TH')
+                        : '—'}
+                    </span>
                   </div>
                 );
               })}
             </div>
           </div>
         )}
+
+        {/* เป้าเชิงกิจกรรมของทีม CRM (PART 110) — โชว์เฉพาะคนที่ตั้งเป้ายอด CRM ไว้ = "ทีม CRM" ของเดือนนั้น */}
+        {(() => {
+          const crmPeople = people.filter(n => numOf(rows[n], 'crm_target') > 0);
+          if (!crmPeople.length) return null;
+          return (
+            <div className="rounded-lg border overflow-hidden">
+              <div className="px-3 py-1.5 bg-muted/40 text-[11px] text-muted-foreground">เป้ากิจกรรม CRM (ไม่ตั้ง = ไม่แสดงเกจในหน้า CRM)</div>
+              <div className="grid grid-cols-[minmax(72px,1.2fr)_1fr_1fr] gap-2 items-center px-3 py-1.5 text-[11px] text-muted-foreground border-b">
+                <span>เซลล์ CRM</span><span className="text-right">เป้าสาย/เดือน</span><span className="text-right">เป้า %รับสาย</span>
+              </div>
+              <div className="divide-y">
+                {crmPeople.map(name => {
+                  const r = rows[name] || {};
+                  return (
+                    <div key={name} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) saveIfDirty(name); }}
+                      className="grid grid-cols-[minmax(72px,1.2fr)_1fr_1fr] gap-2 items-center px-3 py-1.5">
+                      <span className="text-sm font-medium truncate">{name}</span>
+                      <MoneyInput value={r.calls_target ?? ''} onChange={e => setField(name, 'calls_target', e.target.value)} className="h-8 min-w-0" placeholder="0" aria-label={`เป้าจำนวนสายของ ${name}`} />
+                      <Input type="number" inputMode="numeric" min="0" max="100" value={r.answer_rate_target ?? ''} onChange={e => setField(name, 'answer_rate_target', e.target.value)} className="h-8 text-right min-w-0" placeholder="0" aria-label={`เป้าอัตรารับสายของ ${name}`} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ท้าย: เพิ่มเซลล์ (ซ้าย) · บันทึกทั้งหมดเผื่อกรอกหลายคน (ขวา · โผล่เมื่อมีแก้ค้าง) */}
         <div className="flex flex-wrap items-center gap-2">
@@ -438,57 +501,89 @@ export function TargetsView() {
 }
 
 export function GeneralSettings({ dark, setDark }) {
-  
+  // โปรไฟล์ของฉัน — ดึงจาก roles/staff ด้วยอีเมลที่ล็อกอินอยู่ (เดิมหน้านี้ไม่บอกเลยว่ากำลังใช้สิทธิ์อะไรอยู่)
+  const me = (userEmail() || '').toLowerCase();
+  const low = (x) => String(x || '').toLowerCase();
+  const role = (DD.roles || []).find(r => low(r.email) === me) || null;
+  const staff = (DD.staff || []).find(st => low(st.email) === me) || null;
+  const myName = role?.name || staff?.name || (me ? me.replace(/@.*/, '') : 'ไม่ทราบชื่อ');
+  const myColor = staff?.color || role?.color || 'var(--accent)';
+  const roleMeta = { admin: { l: 'แอดมิน', c: 'var(--accent)' }, editor: { l: 'ผู้แก้ไข', c: 'var(--good)' }, viewer: { l: 'ดูอย่างเดียว', c: 'var(--ink-3)' } };
+  const rm = roleMeta[role?.role] || roleMeta[isAdmin() ? 'admin' : canEdit() ? 'editor' : 'viewer'];
+  const locks = (role?.lockedSections || []).length;
+
+  const SHORTCUTS = [
+    // ต้องเป็น 'admin' ให้ตรงกับแท็บจริง (views-settings.jsx) — เดิม 'edit' ทำให้ editor กดแล้วเด้งกลับแท็บทั่วไปเงียบ ๆ
+    { id: 'targets', icon: 'target', label: 'เป้า & คอมมิชชั่น', hint: 'ตั้งเป้าเดือนนี้', need: 'admin' },
+    { id: 'roles', icon: 'users', label: 'ผู้ใช้ & สิทธิ์', hint: `${(DD.roles || []).length} คน`, need: 'admin' },
+    { id: 'quality', icon: 'search', label: 'คุณภาพข้อมูล', hint: 'ตรวจข้อมูลที่ยังไม่ครบ', need: 'edit' },
+    { id: 'trash', icon: 'trash', label: 'ถังขยะ', hint: 'กู้ของที่ลบไป', need: 'edit' },
+  ].filter(x => x.need === 'admin' ? isAdmin() : x.need === 'edit' ? canEdit() : true);
+
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-      {/* Appearance */}
+    <div className="flex flex-col gap-5 max-w-3xl w-full">
+      {/* โปรไฟล์ของฉัน */}
       <Card>
-        <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Icon name={dark ? 'moon' : 'sun'} className="size-5 text-muted-foreground" /> ธีมและการแสดงผล
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-semibold text-sm">โหมดมืด</div>
-              <div className="text-sm text-muted-foreground mt-1">เปลี่ยนธีมสีของระบบ</div>
+        <CardContent className="pt-5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="grid size-11 shrink-0 place-items-center rounded-xl text-white font-bold" style={{ background: myColor }}>{myName.slice(0, 2).toUpperCase()}</span>
+            <div className="min-w-0 flex-1">
+              <div className="font-bold truncate">{myName}</div>
+              <div className="text-xs text-muted-foreground truncate">{me || 'ยังไม่ได้ล็อกอิน'}</div>
             </div>
-            <ShadcnSwitch checked={dark} onCheckedChange={setDark} aria-label="โหมดมืด" />
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {role?.dutyName && <Badge variant="outline">{role.dutyName}</Badge>}
+              <Badge variant="outline" style={{ color: rm.c, borderColor: rm.c + '55', background: rm.c + '14' }}>{rm.l}</Badge>
+              {locks > 0 && <Badge variant="outline" className="gap-1 text-muted-foreground"><Icon name="lock" className="size-3" />ล็อก {locks} หน้า</Badge>}
+            </div>
+          </div>
+          {!canEdit() && <p className="mt-3 text-xs text-muted-foreground">สิทธิ์ปัจจุบันดูได้อย่างเดียว — แก้ข้อมูลไม่ได้ ติดต่อแอดมินถ้าต้องการสิทธิ์เพิ่ม</p>}
+        </CardContent>
+      </Card>
+
+      {/* ธีม — ปุ่มเลือกชัดกว่าสวิตช์ (สวิตช์เดิมไม่บอกว่าตอนนี้อยู่โหมดไหน จนกว่าจะสังเกตสีจอ) */}
+      <Card>
+        <CardContent className="pt-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold text-sm">ธีมการแสดงผล</div>
+            <div className="text-xs text-muted-foreground mt-0.5">จำไว้ในเครื่องนี้ ไม่กระทบคนอื่น</div>
+          </div>
+          <div className="inline-flex gap-1 rounded-lg border bg-muted/30 p-1">
+            {[[false, 'sun', 'สว่าง'], [true, 'moon', 'มืด']].map(([val, ic, lb]) => (
+              <button key={lb} type="button" onClick={() => setDark(val)} aria-pressed={dark === val}
+                className={'inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[13px] font-medium transition-colors '
+                  + (dark === val ? 'bg-[var(--accent)] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+                <Icon name={ic} className="size-3.5" /> {lb}
+              </button>
+            ))}
           </div>
         </CardContent>
       </Card>
 
+      {/* ทางลัด — ไปแท็บที่ใช้บ่อยโดยไม่ต้องไล่เมนู */}
+      {SHORTCUTS.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {SHORTCUTS.map(x => (
+            <button key={x.id} type="button" onClick={() => goSection('settings', x.id)}
+              className="flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition-colors hover:bg-muted/40" style={{ borderColor: 'var(--line)' }}>
+              <Icon name={x.icon} className="size-4 text-muted-foreground" />
+              <span className="text-[13px] font-semibold leading-tight">{x.label}</span>
+              <span className="text-[11px] text-muted-foreground">{x.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* About */}
+      {/* เกี่ยวกับระบบ — เหลือเท่าที่ใช้จริง (เดิมมีป้าย "Supabase/เปิด" ที่ไม่ได้ทำอะไร) */}
       <Card>
-        <CardHeader className="pb-3 border-b border-border/50 bg-muted/20">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Icon name="sparkle" className="size-5 text-muted-foreground" /> เกี่ยวกับระบบ
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0 divide-y divide-border/50">
-          <div className="flex items-center justify-between py-4">
-            <div>
-              <div className="font-semibold text-sm">เวอร์ชัน</div>
-              <div className="text-sm text-muted-foreground mt-1">ดูอัปเดตที่ป้าย "มีอะไรใหม่" มุมขวาล่าง</div>
-            </div>
-            <Badge variant="secondary">v{APP_VERSION}</Badge>
+        <CardContent className="pt-5 flex flex-wrap items-center gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold text-sm">TMK Operation</div>
+            <div className="text-xs text-muted-foreground mt-0.5">เวอร์ชัน {APP_VERSION} · ข้อมูลสดจาก Supabase</div>
           </div>
-          <div className="flex items-center justify-between py-4">
-            <div>
-              <div className="font-semibold text-sm">แหล่งข้อมูล</div>
-              <div className="text-sm text-muted-foreground mt-1">ทุกหน้าดึงข้อมูลจริงจาก Supabase แบบเรียลไทม์ ไม่มีข้อมูลจำลอง</div>
-            </div>
-            <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Supabase</Badge>
-          </div>
-          <div className="flex items-center justify-between py-4">
-            <div>
-              <div className="font-semibold text-sm">ข้อมูลแยกตามเดือน</div>
-              <div className="text-sm text-muted-foreground mt-1">ทุกหน้าที่มีตัวเลือกเดือนแสดงข้อมูลของเดือนที่เลือก (อดีต/ปัจจุบัน/อนาคต)</div>
-            </div>
-            <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">เปิด</Badge>
-          </div>
+          <Button variant="outline" size="sm" className="ml-auto" onClick={() => goSection('whatsnew')}>
+            <Icon name="sparkle" className="size-4 mr-1.5" /> มีอะไรใหม่
+          </Button>
         </CardContent>
       </Card>
     </div>
@@ -503,23 +598,15 @@ export { BrandsView, ChannelsView } from './views-settings-catalog.jsx';
 /* DutiesView + RolesView แยกไป views-settings-people.jsx (REFACTOR-1) — re-export กัน consumer แก้ */
 export { DutiesView, RolesView } from './views-settings-people.jsx';
 
-const TRASH_TABLES = [
-  { table: 'tmk_tasks',             type: 'งาน',        nameCol: 'title',   key: 'id' },
-  { table: 'tmk_campaigns',         type: 'แคมเปญ',     nameCol: 'name',    key: 'id' },
-  { table: 'tmk_channels',          type: 'ช่องทาง',    nameCol: 'name',    key: 'id' },
-  { table: 'tmk_products',          type: 'สินค้า',      nameCol: 'name',    key: 'id' },
-  { table: 'tmk_duties',            type: 'หน้าที่',     nameCol: 'name',    key: 'id' },
-  { table: 'tmk_ad_campaigns',      type: 'แคมเปญแอด',  nameCol: 'name',    key: 'id' },
-  { table: 'tmk_customer_segments', type: 'กลุ่มลูกค้า', nameCol: 'name',    key: 'id' },
-  { table: 'tmk_user_roles',        type: 'ผู้ใช้',      nameCol: 'name',    key: 'email' },
-  { table: 'tmk_daily_sales',       type: 'ยอดรายวัน',   nameCol: 'date',    key: 'id' },
-];
 
 export function TrashView() {
   const { reload, refresh } = useData() || {};
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');   // ค้นหาชื่อในถังขยะ
+  const [typeF, setTypeF] = useState('');   // กรองตามชนิด (งาน/แคมเปญ/ผู้ใช้…)
+  const [loadErr, setLoadErr] = useState([]);   // ชนิดที่อ่านไม่สำเร็จ — ต้องบอก ไม่ใช่โชว์ว่าง
 
   const aliveRef = React.useRef(true);
   // ไม่ setLoading(true) ตอนต้น: ครั้งแรก state เริ่มเป็น true อยู่แล้ว / ตอน refetch (restore/purge) ปล่อยรายการเดิมค้างไว้ไม่ให้กระพริบ (มี busy คุมปุ่มแล้ว)
@@ -534,8 +621,12 @@ export function TrashView() {
       );
       if (!aliveRef.current) return; // กัน setState หลัง unmount
       const all = [];
+      const failed = [];
       results.forEach((r, i) => {
-        if (r.error || !r.data) return;
+        // เดิม `if (r.error) return;` = ตารางไหนอ่านไม่ได้ก็หายไปเงียบ ๆ
+        // ผู้ใช้เห็นถังขยะว่างแล้วนึกว่าไม่มีของ ทั้งที่จริงคืออ่านไม่ได้
+        if (r.error) { failed.push(TRASH_TABLES[i].type); return; }
+        if (!r.data) return;
         const meta = TRASH_TABLES[i];
         r.data.forEach(row => all.push({
           meta,
@@ -546,8 +637,10 @@ export function TrashView() {
       });
       all.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
       setItems(all);
+      setLoadErr(failed);
     } catch (e) {
       console.error('Trash load failed:', e);
+      if (aliveRef.current) setLoadErr(['ทั้งหมด']);
     } finally { if (aliveRef.current) setLoading(false); }
   };
 
@@ -580,9 +673,11 @@ export function TrashView() {
 
   const purge = async (it) => {
     if (!guardEdit()) return;
-    if ((it.meta.table === 'tmk_user_roles' || it.meta.table === 'tmk_staff') && !guardAdmin()) return; // ผู้ใช้/สิทธิ์ = admin
+    // ตารางที่เป็นเงิน/สิทธิ์ = แอดมินเท่านั้น — ให้ตรงกับ policy ฝั่ง DB (RLS Tier 3b)
+    // ไม่งั้นคนแก้ไขได้จะกดแล้วเจอ error RLS งง ๆ แทนที่จะถูกกันตั้งแต่แรก
+    if (needsAdminToPurge(it.meta) && !guardAdmin()) return;
     if (busy) return;
-    if (!await confirm({ title: 'ลบถาวร', body: `ลบถาวร "${it.name}"?\nลบแล้วกู้คืนไม่ได้อีก`, danger: true, confirmText: 'ลบถาวร' })) return;
+    if (!await confirm({ title: 'ลบถาวร', body: purgeWarning(it.meta, it.name), danger: true, confirmText: 'ลบถาวร' })) return;
     setBusy(true);
     try {
       const { error } = await supabase.from(it.meta.table).delete().eq(it.meta.key, it.id);
@@ -600,70 +695,115 @@ export function TrashView() {
   };
 
   const fmtDate = (s) => { try { return new Date(s).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+  // "ลบเมื่อ x วันก่อน" อ่านง่ายกว่าวันที่ดิบเวลาไล่หาของที่เพิ่งลบ
+  const relTime = (iso) => {
+    const t = new Date(iso).getTime(); if (!t) return '';
+    // eslint-disable-next-line react-hooks/purity -- ป้ายเวลาสัมพัทธ์ต้องอิงเวลาปัจจุบันตอน render
+    const sec = (Date.now() - t) / 1000;
+    if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + ' นาทีก่อน';
+    if (sec < 86400) return Math.floor(sec / 3600) + ' ชม.ก่อน';
+    if (sec < 86400 * 7) return Math.floor(sec / 86400) + ' วันก่อน';
+    return fmtDate(iso);
+  };
 
+  const ql = query.trim().toLowerCase();
+  const byType = {};
+  items.forEach(it => { byType[it.meta.type] = (byType[it.meta.type] || 0) + 1; });
+  const shown = items.filter(it => (!typeF || it.meta.type === typeF) && (!ql || String(it.name).toLowerCase().includes(ql)));
+
+  /* ⚠️ early-return นี้เคยอยู่ "ก่อน" แบนเนอร์ loadErr เสมอ
+     → RLS/เน็ตพัง = ทุก query error → items=[] → หน้าจอขึ้น "ถังขยะว่าง · กู้คืนได้ตลอด"
+       ทั้งที่แถว tmk_daily_sales (ยอดเงิน) ที่ soft-delete ไว้มองไม่เห็นและกู้ไม่ได้
+     อ่านไม่ได้ ≠ ไม่มีของ — ต้องบอกตรง ๆ พร้อมปุ่มลองใหม่ */
+  if (!loading && items.length === 0 && loadErr?.length) {
+    return (
+      <Card className="max-w-3xl w-full" style={{ borderColor: 'var(--bad)' }}>
+        <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-3">
+          <Icon name="alertTriangle" className="size-10" style={{ color: 'var(--bad)' }} />
+          <h3 className="text-lg font-semibold">อ่านถังขยะไม่สำเร็จ</h3>
+          <p className="text-sm text-muted-foreground" style={{ lineHeight: 1.7 }}>
+            ยังไม่รู้ว่ามีของอยู่หรือเปล่า — <b>ไม่ได้แปลว่าถังขยะว่าง</b>
+            <br />{loadErr.join(' · ')}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => load()}>ลองใหม่</Button>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!loading && items.length === 0) {
     return (
-      <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-        <Card className="border-dashed bg-muted/10">
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <Icon name="trash" className="size-16 opacity-20 mb-4 text-muted-foreground" />
-            <h3 className="text-xl font-semibold mb-2">ถังขยะว่างเปล่า</h3>
-            <p className="text-sm text-muted-foreground">รายการที่ลบจะถูกเก็บไว้ที่นี่ · กู้คืนได้ตลอด</p>
-          </CardContent>
-        </Card>
-      </div>
+      <Card className="border-dashed bg-muted/10 max-w-3xl w-full">
+        <CardContent className="flex flex-col items-center justify-center py-14 text-center">
+          <Icon name="trash" className="size-12 opacity-20 mb-3 text-muted-foreground" />
+          <h3 className="text-lg font-semibold mb-1">ถังขยะว่าง</h3>
+          <p className="text-sm text-muted-foreground">ของที่ลบจะมาอยู่ที่นี่ กู้คืนได้ตลอด</p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between pb-4 border-b border-border/50 bg-muted/20">
-          <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Icon name="trash" className="size-5 text-destructive" /> ถังขยะ <span className="text-sm text-muted-foreground font-normal">({items.length})</span>
-            </CardTitle>
-            <CardDescription className="mt-1.5">กู้คืนได้ · หรือลบถาวร</CardDescription>
-          </div>
-        </CardHeader>
+    <div className="flex flex-col gap-3 max-w-3xl w-full">
+      {/* แถบเครื่องมือ — เดิมมีแต่รายการยาว หาของที่จะกู้ไม่เจอเมื่อมีหลายสิบชิ้น */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold inline-flex items-center gap-2"><Icon name="trash" className="size-4" /> ถังขยะ <span className="num text-muted-foreground">{items.length}</span></span>
+        <SearchInput placeholder="ค้นหาชื่อ" value={query} onChange={e => setQuery(e.target.value)} wrapperClassName="w-full sm:w-[200px] sm:ml-auto" />
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button type="button" onClick={() => setTypeF('')} aria-pressed={!typeF}
+          className={'rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors ' + (!typeF ? 'bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent-2)]' : 'text-muted-foreground hover:bg-muted/50')}>
+          ทั้งหมด <b className="num">{items.length}</b>
+        </button>
+        {Object.entries(byType).map(([t, n]) => (
+          <button key={t} type="button" onClick={() => setTypeF(f => f === t ? '' : t)} aria-pressed={typeF === t}
+            className={'rounded-full border px-2.5 py-1 text-[12px] font-medium transition-colors ' + (typeF === t ? 'bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--accent-2)]' : 'text-muted-foreground hover:bg-muted/50')}>
+            {t} <b className="num">{n}</b>
+          </button>
+        ))}
+      </div>
 
-        <CardContent className="p-0">
-          <div className="bg-amber-500/10 border-l-4 border-amber-500 p-3 m-4 rounded-r-md">
-            <p className="text-sm text-amber-700 font-medium">หมายเหตุ: กู้คืนแคมเปญแล้ว งานที่เคยผูกจะไม่กลับมาผูกอัตโนมัติ (ต้องเลือกแคมเปญใหม่ในแต่ละงาน)</p>
-          </div>
+      {/* อ่านบางส่วนไม่สำเร็จ ต้องบอก — ไม่งั้นถังขยะที่ว่างเพราะ error ดูเหมือน "ไม่มีของ" */}
+      {loadErr.length > 0 && (
+        <div role="status" className="flex items-center gap-2.5 mb-3 px-3 py-2.5 rounded-[var(--r-sm)]"
+          style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--warn) 35%, transparent)' }}>
+          <span style={{ color: 'var(--warn)', flexShrink: 0 }}><Icon name="alertTriangle" size={15} /></span>
+          <span className="text-sm flex-1 min-w-0">
+            อ่านรายการที่ลบของ <b>{loadErr.join(' · ')}</b> ไม่สำเร็จ — รายการด้านล่างอาจไม่ครบ
+          </span>
+          <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={() => load()}>ลองใหม่</Button>
+        </div>
+      )}
 
+      <Card className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="py-12 flex flex-col items-center justify-center text-muted-foreground gap-2">
+            <Icon name="loader" className="size-6 animate-spin opacity-50" /><p className="text-sm">กำลังโหลด…</p>
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">ไม่พบรายการที่ตรงกับที่ค้นหา</div>
+        ) : (
           <div className="flex flex-col divide-y divide-border/50">
-            {loading ? (
-              <div className="py-12 flex flex-col items-center justify-center text-muted-foreground gap-3">
-                <Icon name="loader" className="size-6 animate-spin opacity-50" />
-                <p className="text-sm">กำลังโหลด…</p>
-              </div>
-            ) : items.map((it, i) => (
-              <div key={it.meta.table + it.id + i} className="flex flex-wrap sm:flex-nowrap items-center gap-4 p-4 hover:bg-muted/20 transition-colors">
-                <Badge variant="outline" className="bg-muted shrink-0 text-xs py-1">
-                  {it.meta.type}
-                </Badge>
-                
-                <div className="flex-1 min-w-[200px]">
+            {shown.map((it, i) => (
+              <div key={it.meta.table + it.id + i} className="flex flex-wrap sm:flex-nowrap items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors">
+                <Badge variant="outline" className="bg-muted shrink-0 text-[11px]">{it.meta.type}</Badge>
+                <div className="flex-1 min-w-[160px]">
                   <div className="font-semibold text-sm truncate text-foreground">{it.name}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">ลบเมื่อ {fmtDate(it.deletedAt)}</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5" title={fmtDate(it.deletedAt)}>ลบเมื่อ {relTime(it.deletedAt)}</div>
                 </div>
-                
-                <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end mt-2 sm:mt-0">
-                  <Button variant="outline" size="sm" disabled={busy} onClick={() => restore(it)}>
-                    <Icon name="refreshCcw" className="size-4 mr-2" /> กู้คืน
+                <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto justify-end">
+                  <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => restore(it)}>
+                    <Icon name="refresh" className="size-3.5 mr-1.5" /> กู้คืน
                   </Button>
-                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" disabled={busy} onClick={() => purge(it)}>
-                    <Icon name="trash" className="size-4 mr-2" /> ลบถาวร
+                  <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={busy} onClick={() => purge(it)}>
+                    ลบถาวร
                   </Button>
                 </div>
               </div>
             ))}
           </div>
-        </CardContent>
+        )}
       </Card>
+      <p className="text-[11px] text-muted-foreground">กู้คืนแคมเปญแล้ว งานที่เคยผูกไว้จะไม่กลับมาผูกเอง — ต้องเลือกแคมเปญใหม่ในแต่ละงาน</p>
     </div>
   );
 }
-
-

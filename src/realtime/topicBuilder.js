@@ -4,6 +4,7 @@
    หลักการ (§6.7 คำเตือน): topic มาจาก "ขอบเขตข้อมูลที่ผู้ใช้กำลังดู" ไม่ใช่ชื่อตาราง
    pure + deterministic → unit-test ได้ (blueprint §28 Unit: topic builder)
    ยังไม่ wire — เป็น primitive ให้ scoped subscription (Phase 2/3) ใช้ตอน migration realtime
+   ⚠️ ยังไม่ wire — primitive ของ REALTIME-C2-PLAN (ดู src/realtime/README.md) · อย่าลบเพราะ "ไม่มีใคร import"
    ============================================================ */
 
 // sanitize ส่วนประกอบ topic — กัน ':' / ช่องว่าง ทำให้ scope เพี้ยน (deterministic · lowercase)

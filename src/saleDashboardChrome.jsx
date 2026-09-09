@@ -3,7 +3,7 @@
    แยกมาจาก saleDashboard.jsx (ยกมาทั้งดุ้น ไม่แก้เนื้อใน):
    MultiSelect · DateRangePicker · SectionHead · DashboardSkeleton · ExportBtn
    ============================================================ */
-import { Icon, Skel } from './components.jsx';
+import { Icon, Skel, InfoTip } from './components.jsx';
 import { downloadCsv } from './lib/exportCsv.js';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,29 @@ export { MultiSelect } from './components/MultiSelect.jsx'; // แหล่ง�
 export { DateRangePicker } from './saleWidgets.jsx';
 
 
+
+/* ============================================================
+   KpiCard — การ์ดตัวชี้วัดแบบเดียวกันทั้ง 8 ใบ (รื้อ 22 ส.ค.: 3 ชั้น 3 สไตล์ 10 กล่อง → 2 แถว 8 ใบ)
+   หัว+ⓘ · เลขใหญ่ · ชิป ▲▼ เทียบช่วงก่อน (สีตามดี/แย่ · ซ่อนเมื่อไม่มีช่วงก่อน) · บรรทัด 2 = แถบ/กราฟมินิ (children) · บรรทัด 3 = sub
+   delta = { txt:'+12%', good:true|false|null } (null = เป็นกลาง เช่น สัดส่วน COD)
+   ============================================================ */
+export function KpiCard({ label, tip, value, valueColor, delta, children, sub, tone = 'var(--accent)', index }) {
+  return (
+    <div className="metric-card metric-anim kpi-card" style={{ '--i': index ?? 0, borderLeft: `3px solid ${tone}` }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+        <div className="eyebrow row" style={{ gap: 4, minWidth: 0 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>{tip && <InfoTip text={tip} />}</div>
+        {delta && (
+          <span className="kpi-delta num" style={{ color: delta.good == null ? 'var(--ink-3)' : delta.good ? 'var(--good)' : 'var(--bad)', background: delta.good == null ? 'var(--surface-3)' : delta.good ? 'var(--good-soft)' : 'var(--bad-soft)' }} title={delta.title || 'เทียบช่วงก่อน'}>
+            {delta.dir != null && <Icon name={delta.dir >= 0 ? 'up' : 'down'} size={11} />}{delta.txt}
+          </span>
+        )}
+      </div>
+      <div className="num kpi-val" style={{ color: valueColor }}>{value}</div>
+      <div className="kpi-viz">{children || <div style={{ height: 7 }} />}</div>
+      <div className="cap kpi-sub" style={{ color: 'var(--ink-4)' }}>{sub || '\u00a0'}</div>
+    </div>
+  );
+}
 
 // หัวข้อ section — สไตล์เดียวกับหัวข้อการ์ดกราฟ (ชื่อหนา + คำอธิบายจาง)
 export function SectionHead({ title, sub, right }) {

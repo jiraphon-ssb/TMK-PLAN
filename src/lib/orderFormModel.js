@@ -33,3 +33,16 @@ export const skuToLine = (s, known = true) => {
 
 // ยอดขายที่ใช้จริง: กรอกเอง (>0) หรือผลรวมรายการ
 export const effectiveTotal = (f) => N(f.total) > 0 ? N(f.total) : sumLines(f.lines);
+
+// กระทบยอด: ผลรวมรายการ ควร = "ราคาเสื้อ" (ยอดขาย − ค่าส่ง − VAT + ส่วนลด) ไม่ใช่เทียบกับยอดขายตรงๆ
+// (เดิมเตือน "≠ ยอดขาย" ทุกใบที่มีค่าส่ง/ส่วนลด ทั้งที่ถูกแล้ว) · คืน null = ยังไม่มีอะไรให้เทียบ (ฟอร์มเปล่า)
+export const reconcileLines = (f) => {
+  const lineSum = sumLines(f.lines), total = N(f.total), subtotal = N(f.subtotal), ship = N(f.shipping), vat = N(f.vat), disc = N(f.discount);
+  if (lineSum <= 0 && total <= 0) return null;
+  const expected = subtotal > 0 ? subtotal : total > 0 ? total - ship - vat + disc : lineSum;
+  const parts = [];
+  if (disc > 0) parts.push({ label: 'ส่วนลด', val: -disc });
+  if (ship > 0) parts.push({ label: 'ค่าส่ง', val: ship });
+  if (vat > 0) parts.push({ label: 'VAT', val: vat });
+  return { lineSum, expected, match: Math.abs(lineSum - expected) <= 0.01, parts, total: total > 0 ? total : lineSum + parts.reduce((a, p) => a + p.val, 0), basis: subtotal > 0 ? 'subtotal' : total > 0 ? 'total' : 'lines' };
+};

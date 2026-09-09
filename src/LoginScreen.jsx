@@ -59,7 +59,7 @@ export function LoginScreen({ onLogin }) {
                 เข้าสู่ระบบ
               </h1>
               <p className="text-sm text-muted-foreground">
-                ยินดีต้อนรับกลับมา 👋
+                ยินดีต้อนรับกลับมา
               </p>
             </div>
             <div className="grid gap-6">

@@ -1,3 +1,4 @@
+-- 🚨 ห้ามรันไฟล์นี้ซ้ำหลังรัน Tier 2/3 โดยไม่อ่านคอมเมนต์ในลูปก่อน (แก้ guard แล้ว 8 ก.ย. 69)
 -- ============================================================================
 -- 20260716-enable-rls-tier1.sql — RLS-1: เปิด Row Level Security ทุกตาราง tmk_*
 -- ============================================================================
@@ -31,9 +32,20 @@ begin
     where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'tmk\_%' escape '\'
   loop
     execute format('alter table public.%I enable row level security', r.relname);
+    /* ⚠️⚠️ แก้ 8 ก.ย. 69 — เวอร์ชันเดิมของบล็อกนี้ "รันซ้ำแล้วย้อนงานความปลอดภัยทั้งหมด"
+       guard เดิมเช็คแค่ชื่อ policy ของตัวเอง แต่ Tier 2 (บรรทัด 50, 64) และ Tier 3
+       (BUNDLE-rls-tier3.sql:67) drop 'tmk_authenticated_all' ทิ้งไปแล้ว
+       → รันไฟล์นี้ซ้ำ = สร้าง using(true) with check(true) ทับ **ทุกตาราง tmk_**
+         รวม tmk_user_roles → permissive policy ถูก OR กัน → กฎ admin-only ถูกข้าม
+         → viewer ยิง PATCH /rest/v1/tmk_user_roles?email=eq.<ตัวเอง> ตั้ง role='admin' ได้
+       guard ใหม่: (ก) ข้ามตารางสิทธิ์ตายตัว (ข) เช็คว่า "ตารางนี้มี policy อะไรอยู่แล้วหรือยัง"
+       ไม่ใช่เช็คชื่อเดียว — ตรงกับที่แก้ไว้ใน RLS-REAPPLY.sql */
+    if r.relname in ('tmk_user_roles', 'tmk_staff', 'tmk_audit_logs') then
+      continue;   -- ตารางสิทธิ์: policy ของมันอยู่ที่ Tier 2/3 ห้ามแตะจากที่นี่
+    end if;
     if not exists (
       select 1 from pg_policies
-      where schemaname = 'public' and tablename = r.relname and policyname = 'tmk_authenticated_all'
+      where schemaname = 'public' and tablename = r.relname
     ) then
       execute format(
         'create policy tmk_authenticated_all on public.%I as permissive for all to authenticated using (true) with check (true)',
@@ -72,7 +84,10 @@ as $$
   limit 1;
 $$;
 revoke all on function public.tmk_public_track(text) from public;
-grant execute on function public.tmk_public_track(text) to anon, authenticated;
+-- ⚠️ ถอน anon แล้วเมื่อ 8 ก.ย. 69 (20260908-public-share-hardening.sql) — หน้า PublicTrackPage ถูกลบไปแล้ว
+-- ถ้าเปิดคอมเมนต์บรรทัดนี้ = คืนช่องให้คนนอกดึงชื่อลูกค้า/ยอด/เลขพัสดุตามรหัสที่เดาได้
+-- grant execute on function public.tmk_public_track(text) to anon, authenticated;
+grant execute on function public.tmk_public_track(text) to authenticated;
 
 -- ── §3b RPC สาธารณะ: หน้าแชร์โครงการ (แทน anon select ตรง 7 ตาราง) ─────────
 --    ต้องรู้ share_token ที่ share_enabled=true เท่านั้น · flow ตัด share_token ออกจากผลลัพธ์

@@ -6,6 +6,7 @@
    ============================================================ */
 import { useState } from 'react';
 import { TMK } from './data.js';
+import { ReorderButtons } from './components/ReorderButtons.jsx';
 import { Icon, ColorPicker } from './components.jsx';
 import { useData } from './dataContext.jsx';
 import { supabase } from './lib/supabaseClient.js';
@@ -191,23 +192,11 @@ export function ChannelsView() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-      <Card className="bg-primary/5 border-l-4 border-l-primary shadow-none">
-        <CardContent className="p-5 flex gap-4 items-start">
-          <Icon name="layers" className="size-6 text-primary mt-1" />
-          <div>
-            <h3 className="text-lg font-bold mb-1 text-foreground">ช่องทางการขาย</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              จัดการรายการช่องทางที่ใช้บันทึกยอดขาย — เพิ่ม/ลบ/แก้ไอคอน/สี/เป้าหมาย และจัดเรียงลำดับได้ ข้อมูลเก็บใน Supabase
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
+    <div className="flex flex-col gap-4 max-w-3xl w-full">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3 border-b border-border/50 bg-muted/20">
           <CardTitle className="text-lg flex items-center gap-2">
-            <Icon name="layers" className="size-5 text-muted-foreground" /> ช่องทางทั้งหมด ({channels.length})
+            <Icon name="layers" className="size-5 text-muted-foreground" /> ช่องทางขาย <span className="text-sm font-normal text-muted-foreground">({channels.length})</span>
           </CardTitle>
           <Button size="sm" onClick={() => setShowAdd(true)}>
             <Icon name="plus" className="size-4 mr-2" /> เพิ่มช่องทางใหม่
@@ -235,19 +224,9 @@ export function ChannelsView() {
                     background: isOver ? 'hsl(var(--accent)/0.1)' : 'transparent',
                     opacity: dragId === c.id ? 0.4 : 1,
                   }}>
-                  <div className="hidden sm:flex shrink-0 text-muted-foreground/50" title="ลากเพื่อเรียงลำดับ">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="9" cy="6" r="1.5" fill="currentColor" /><circle cx="9" cy="12" r="1.5" fill="currentColor" /><circle cx="9" cy="18" r="1.5" fill="currentColor" />
-                      <circle cx="15" cy="6" r="1.5" fill="currentColor" /><circle cx="15" cy="12" r="1.5" fill="currentColor" /><circle cx="15" cy="18" r="1.5" fill="currentColor" />
-                    </svg>
-                  </div>
-                  {/* สำหรับมือถือ */}
-                  <div className="flex sm:hidden flex-col gap-1 shrink-0 px-1" onClick={e => e.stopPropagation()}>
-                    <button className="text-muted-foreground disabled:opacity-30 p-1" disabled={idx === 0 || busy} onClick={() => reorderChannel(c.id, channels[idx - 1].id)}>▲</button>
-                    <button className="text-muted-foreground disabled:opacity-30 p-1" disabled={idx === channels.length - 1 || busy} onClick={() => reorderChannel(c.id, channels[idx + 1].id)}>▼</button>
-                  </div>
-                  
-                  {c.logoUrl ? (
+                    <ReorderButtons label={c.name} index={idx} total={channels.length} disabled={busy}
+                      onMove={(d) => reorderChannel(c.id, channels[idx + d].id)} />
+                    {c.logoUrl ? (
                     <img src={c.logoUrl} alt={c.name} className="w-10 h-10 rounded-lg object-contain shrink-0 border" />
                   ) : (
                     <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold shrink-0" 
@@ -258,6 +237,11 @@ export function ChannelsView() {
                   
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-foreground text-base truncate">{c.name}</div>
+                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground mt-0.5">
+                      <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: c.hex || c.color || '#666' }} />{c.hex || c.color || 'ไม่มีสี'}</span>
+                      <span>ค่าธรรมเนียม {c.platformFeePct ? `${c.platformFeePct}%` : '—'}</span>
+                      {c.hasAd && <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">มีโฆษณา</Badge>}
+                    </div>
                   </div>
                   
                   <Button variant="ghost" size="icon" onClick={() => startEdit(c)} title="แก้ไข">

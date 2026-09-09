@@ -1,107 +1,126 @@
 /* ============================================================
-   plannerTimeline.jsx — วิว "ไทม์ไลน์" ของหน้าวางแผน (แยกจาก views-planner.jsx)
-   - TimelineView ยกมาทั้งดุ้น ไม่แก้เนื้อใน · รับ filtered/fProps/flow/readOnly เป็น props เหมือนเดิม
+   plannerTimeline.jsx — วิว "ไทม์ไลน์" ของโครงการ — PART 104 (รื้อใหม่)
+   ============================================================
+   เดิม: การ์ดความคืบหน้าแคมเปญกองบนสุด (นับจาก DD.tasks ทั้งระบบ ไม่สนตัวกรอง = เลขไม่ตรงกับที่เห็น)
+         + ไล่วันเรียงจากอดีต→อนาคตทั้งก้อน · จุดวันอดีตเป็นสีเขียวเหมือน "เสร็จ" ทั้งที่อาจเลยกำหนด
+   ใหม่: จัดเป็นช่วงตามความเร่งด่วน (เลยกำหนด → วันนี้ → พรุ่งนี้ → ใน 7 วัน → ภายหลัง → ไม่มีกำหนด → เสร็จแล้ว)
+         · ยึด "วันครบกำหนด" (dateEnd||date) เหมือนทุกวิว · เสร็จแล้วพับไว้ · แถบสรุปกดกระโดดได้
    ============================================================ */
-import { Icon, Ring } from './components.jsx';
-import { parseTaskDate, todayISO, thaiDate } from './lib/dateUtils.js';
+import { useState } from 'react';
+import { Icon } from './components.jsx';
+import { thaiDate } from './lib/dateUtils.js';
 import { TaskCard } from './taskCard.jsx';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { DD, chipVar2 } from './saleWidgets.jsx';
 import { openModal } from './lib/appBus.js';
 import { doneIdsOf } from './plannerColumns.js';
 import { PlannerFilters } from './plannerFilters.jsx';
+import { dueInfo, sortTasks, isoToday } from './lib/taskFilters.js';
+import { EmptyState } from './components/EmptyState.jsx';
 
-/* ---- Smart Planner Timeline (vertical) ---- */
+// ช่วงเวลา (เรียงตามความเร่งด่วน) — key ต้องตรงกับ bucketOf()
+const BUCKETS = [
+  { id: 'overdue', label: 'เลยกำหนด', color: 'var(--bad)', hint: 'ต้องจัดการก่อน' },
+  { id: 'today', label: 'วันนี้', color: 'var(--accent)', hint: '' },
+  { id: 'tomorrow', label: 'พรุ่งนี้', color: 'var(--warn)', hint: '' },
+  { id: 'week', label: 'ใน 7 วัน', color: 'var(--info)', hint: '' },
+  { id: 'later', label: 'ภายหลัง', color: 'var(--ink-3)', hint: '' },
+  { id: 'none', label: 'ไม่มีกำหนด', color: 'var(--ink-4)', hint: 'ยังไม่ได้ตั้งวัน' },
+  { id: 'done', label: 'เสร็จแล้ว', color: 'var(--good)', hint: '' },
+];
+export function bucketOf(state, diff) {
+  if (state === 'done') return 'done';
+  if (state === 'none') return 'none';
+  if (state === 'overdue') return 'overdue';
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  if (diff <= 7) return 'week';
+  return 'later';
+}
+
 export function TimelineView({ filtered, fProps, flow, readOnly }) {
-  const stMeta = { live: { l: 'กำลังดำเนินการ', cls: 'chip-good' }, upcoming: { l: 'กำลังจะมา', cls: 'chip-accent' }, paused: { l: 'หยุดชั่วคราว', cls: 'chip-warn' }, cancelled: { l: 'ยกเลิก', cls: '' }, done: { l: 'จบแล้ว', cls: '' } };
   const doneIds = doneIdsOf(flow);
+  const today = isoToday();
   const newTaskBase = flow ? { flow_id: (flow.scopeId ?? flow.id) } : {};
-  const campScope = fProps.campScope;
+  const [foldDone, setFoldDone] = useState(true); // งานที่เสร็จแล้วพับไว้ (เดิมกางเต็ม ดันงานค้างตกจอ)
 
-  // Campaign progress — นับเฉพาะงานในขอบเขตโครงการ (ถ้ามี)
-  const campTasks = {};
-  (flow ? (DD.tasks || []).filter(t => (t.flow || '') === (flow.scopeId ?? flow.id ?? '')) : (DD.tasks || [])).forEach(t => { campTasks[t.camp] = campTasks[t.camp] || []; campTasks[t.camp].push(t); });
+  // แบ่งงานเข้าช่วง + เรียงตามวันครบกำหนดในแต่ละช่วง
+  const groups = {};
+  (filtered || []).forEach(t => {
+    const d = dueInfo(t, today, doneIds);
+    const b = bucketOf(d.state, d.diff);
+    (groups[b] = groups[b] || []).push({ t, d });
+  });
+  const shown = BUCKETS.map(b => ({ ...b, items: sortTasks((groups[b.id] || []).map(x => x.t), b.id === 'done' ? 'updated' : 'due') }))
+    .filter(b => b.items.length > 0);
+  const open = shown.filter(b => b.id !== 'done').reduce((n, b) => n + b.items.length, 0);
 
-  // Stats
-  // เทียบด้วยวันที่จริง (รองรับงานข้ามเดือน) — ไม่ใช่แค่เลขวัน
-  const todayIso = todayISO();
-  const dayDiff = (s) => { const iso = parseTaskDate(s); if (!iso) return null; return Math.round((new Date(iso + 'T00:00:00') - new Date(todayIso + 'T00:00:00')) / 86400000); };
-
-  // Group filtered tasks by FULL ISO date (กันงานคนละเดือน/คนละปีวันเดียวกันมารวมกัน)
-  const byDate = {};
-  filtered.forEach(t => { const k = t.dateISO || parseTaskDate(t.date) || t.date || '—'; (byDate[k] = byDate[k] || []).push(t); });
-  const dateKeys = Object.keys(byDate).sort((a, b) => { const ia = parseTaskDate(a) || a, ib = parseTaskDate(b) || b; return ia < ib ? -1 : ia > ib ? 1 : 0; });
+  const openTask = (t) => openModal('task', { ...t, channel: Array.isArray(t.channel) ? t.channel : [t.channel] });
 
   return (
     <div className="content-inner rise">
       <PlannerFilters {...fProps} />
 
-      {/* Campaign progress cards */}
-      <div className="grid g3" style={{ marginBottom: 14, gap: 10 }}>
-        {DD.campaigns.filter(c => (!campScope || campScope.includes(c.id)) && (!fProps.filterCamp?.length || fProps.filterCamp.includes(c.id))).map(c => {
-          const tasks = campTasks[c.id] || [];
-          const done = tasks.filter(t => doneIds.has(t.status)).length;
-          const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
-          const st = stMeta[c.status] || stMeta.done; // กัน status แปลก → จอขาว
-          const campSel = (fProps.filterCamp || []).includes(c.id);
+      {/* แถบสรุป — กดเพื่อกระโดดไปช่วงนั้น (แทนการ์ดแคมเปญเดิมที่เลขไม่ตรงตัวกรอง) */}
+      {shown.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="text-[13px] font-semibold">ค้างอยู่ <span className="num">{open}</span> งาน</span>
+          <span className="h-5 w-px bg-[var(--line)] mx-1" />
+          {shown.map(b => (
+            <a key={b.id} href={`#tl-${b.id}`}
+              className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium hover:bg-muted/40 transition-colors"
+              style={{ borderColor: 'var(--line)', color: 'var(--ink-3)' }}>
+              <span className="size-2 rounded-full" style={{ background: b.color }} />{b.label} <b className="num">{b.items.length}</b>
+            </a>
+          ))}
+          {!readOnly && <Button size="sm" className="ml-auto h-8" onClick={() => openModal('task', { ...newTaskBase })}><Icon name="plus" className="size-4 mr-1" /> เพิ่มงาน</Button>}
+        </div>
+      )}
+
+      {shown.length === 0 && (
+        <Card className="p-6"><EmptyState icon="search" title="ไม่พบงานตามเงื่อนไข" hint="ลองล้างตัวกรอง หรือเพิ่มงานใหม่ในโครงการนี้" /></Card>
+      )}
+
+      <div className="flex flex-col gap-4">
+        {shown.map(b => {
+          const isDoneGroup = b.id === 'done';
+          const folded = isDoneGroup && foldDone;
           return (
-            <Card key={c.id} className="p-3" style={{ display: 'flex', alignItems: 'center', gap: 14, borderLeft: `3px solid ${c.color}`, cursor: 'pointer' }} onClick={() => fProps.setFilterCamp(campSel ? (fProps.filterCamp || []).filter(x => x !== c.id) : [...(fProps.filterCamp || []), c.id])}>
-              <Ring pct={pct} size={48} stroke={5} color={c.color}><span className="num" style={{ fontSize: 'var(--fs-micro)', fontWeight: 700 }}>{pct}%</span></Ring>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="sm" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
-                <div className="cap">{done}/{tasks.length} งาน · {c.start}–{c.end}</div>
-              </div>
-              <Badge variant={chipVar2(st.cls || '')}>{st.l}</Badge>
+            <Card key={b.id} id={`tl-${b.id}`} className="p-0 overflow-hidden" style={{ scrollMarginTop: 80 }}>
+              <button type="button" disabled={!isDoneGroup} onClick={() => setFoldDone(v => !v)} aria-expanded={!folded}
+                className={'w-full flex items-center gap-2 px-4 py-2.5 border-b text-left' + (isDoneGroup ? ' hover:bg-muted/30' : ' cursor-default')}
+                style={{ background: `color-mix(in srgb, ${b.color} 7%, transparent)` }}>
+                {isDoneGroup && <Icon name={folded ? 'chevR' : 'chevD'} className="size-3.5 opacity-60 shrink-0" />}
+                <span className="size-2.5 rounded-full shrink-0" style={{ background: b.color }} />
+                <span className="font-bold text-sm" style={{ color: b.color }}>{b.label}</span>
+                <Badge variant="secondary">{b.items.length}</Badge>
+                {b.hint && <span className="text-[11px] text-muted-foreground hidden sm:inline">{b.hint}</span>}
+              </button>
+              {!folded && (
+                <div className="p-3 flex flex-col gap-2">
+                  {b.items.map(t => {
+                    const d = dueInfo(t, today, doneIds);
+                    return (
+                      <div key={t.id} className="flex items-start gap-3">
+                        {/* รางวัน — วันครบกำหนดจริงของงาน (ไม่มี = ขีด) */}
+                        <div className="shrink-0 w-[86px] pt-2 text-right">
+                          <div className="text-[12px] font-semibold tabular-nums" style={{ color: d.state === 'overdue' ? 'var(--bad)' : 'var(--ink-2)' }}>{d.iso ? thaiDate(d.iso) : '—'}</div>
+                          {d.state === 'overdue' && <div className="text-[10px]" style={{ color: 'var(--bad)' }}>เลย {Math.abs(d.diff)} วัน</div>}
+                          {d.state === 'today' && <div className="text-[10px]" style={{ color: 'var(--accent-2)' }}>วันนี้</div>}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <TaskCard task={t} showFlow={!flow} readOnly={readOnly} hideDate={!t.dateEnd} onClick={() => openTask(t)} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           );
         })}
       </div>
-
-      {/* Vertical Timeline */}
-      <Card className="p-[22px]">
-        <div className="row between" style={{ marginBottom: 12 }}>
-          <span></span>
-          {!readOnly && <Button size="sm" onClick={() => openModal('task', { ...newTaskBase })}><Icon name="plus" /> เพิ่มงาน</Button>}
-        </div>
-        {dateKeys.length === 0 && <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--ink-3)' }}><Icon name="search" /><div className="cap" style={{ marginTop: 6 }}>ไม่พบงานตามเงื่อนไข</div></div>}
-        <div style={{ position: 'relative', paddingLeft: 32 }}>
-          {/* Vertical line */}
-          {dateKeys.length > 0 && <div style={{ position: 'absolute', left: 14, top: 8, bottom: 8, width: 2, background: 'var(--line)', borderRadius: 1 }}></div>}
-
-          {dateKeys.map((dateKey, di) => {
-            const tasks = byDate[dateKey];
-            const diff = dayDiff(dateKey);
-            const isToday = diff === 0;
-            const isPast = diff != null && diff < 0;
-            const iso = parseTaskDate(dateKey);
-            const beYear = iso ? Number(iso.slice(0, 4)) + 543 : '';
-            return (
-              <div key={dateKey} style={{ marginBottom: di < dateKeys.length - 1 ? 20 : 0 }}>
-                {/* Date node */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, marginLeft: -32 }}>
-                  <div style={{ width: 28, display: 'flex', justifyContent: 'center', flexShrink: 0, zIndex: 1 }}>
-                    <div style={{ width: isToday ? 14 : 10, height: isToday ? 14 : 10, borderRadius: '50%', background: isToday ? 'var(--accent)' : isPast ? 'var(--good)' : 'var(--ink-4)', border: isToday ? '2px solid var(--accent-ring)' : 'none' }}></div>
-                  </div>
-                  <div>
-                    <span className="num" style={{ fontSize: 'var(--fs-h3)', fontWeight: 700, color: isToday ? 'var(--accent-2)' : 'var(--ink)' }}>{thaiDate(dateKey) || dateKey}</span>
-                    {isToday && <Badge variant="secondary" style={{ marginLeft: 8 }}>วันนี้</Badge>}
-                    {beYear && <span className="cap" style={{ marginLeft: 8 }}>{beYear}</span>}
-                  </div>
-                </div>
-                {/* Task cards */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {tasks.map(t => (
-                    <TaskCard key={t.id} task={t} showFlow={!flow} readOnly={readOnly}
-                      onClick={() => openModal('task', { ...t, channel: Array.isArray(t.channel) ? t.channel : [t.channel] })} />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
     </div>
   );
 }

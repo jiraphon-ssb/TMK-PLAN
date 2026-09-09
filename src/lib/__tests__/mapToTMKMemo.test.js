@@ -17,7 +17,7 @@ const baseRaw = () => ({
   customers: [], orders: [], customerTotals: [], commentCounts: [],
 });
 
-const product = (id, name) => ({ id, name, price: 100, actual_units: 2, stock_on_hand: 5, reorder_point: 1, lots: [], reservations: [] });
+const brand = (id, name) => ({ id, name, color: '#000', sort_order: 0 });   // brands = memoSection แท้ (deps เดียว) ใช้พิสูจน์สัญญา memo
 const task = (id, title, camp = '') => ({ id, title, date: '2026-08-11', responsible: '', camp, status: 'todo' });
 
 describe('mapToTMK — memo ต่อส่วน', () => {
@@ -25,36 +25,36 @@ describe('mapToTMK — memo ต่อส่วน', () => {
 
   it('reference เดิม → คืน array ตัวเดิม (ข้าม map ซ้ำ)', () => {
     const raw = baseRaw();
-    raw.products = [product('p1', 'เสื้อ A')];
+    raw.brands = [brand('b1', 'TEAMDEE')];
     const a = mapToTMK(raw);
     const b = mapToTMK(raw);
-    expect(b.products).toBe(a.products); // ตัวเดิมจริงๆ ไม่ใช่แค่ค่าเท่ากัน
+    expect(b.brands).toBe(a.brands); // ตัวเดิมจริงๆ ไม่ใช่แค่ค่าเท่ากัน
     expect(b.tasks).toBe(a.tasks);
   });
 
   it('reference ใหม่ → คำนวณใหม่ ได้ค่าที่ถูกต้อง (ไม่คืนของเก่าค้าง)', () => {
     const raw = baseRaw();
-    raw.products = [product('p1', 'เสื้อ A')];
+    raw.brands = [brand('b1', 'TEAMDEE')];
     const a = mapToTMK(raw);
-    expect(a.products.map(p => p.name)).toEqual(['เสื้อ A']);
+    expect(a.brands.map(x => x.name)).toEqual(['TEAMDEE']);
 
     // จำลอง refreshTables: แทนเฉพาะ array ของตารางที่ดึงใหม่
-    raw.products = [product('p1', 'เสื้อ A'), product('p2', 'เสื้อ B')];
+    raw.brands = [brand('b1', 'TEAMDEE'), brand('b2', 'JK')];
     const b = mapToTMK(raw);
-    expect(b.products).not.toBe(a.products);
-    expect(b.products.map(p => p.name)).toEqual(['เสื้อ A', 'เสื้อ B']);
+    expect(b.brands).not.toBe(a.brands);
+    expect(b.brands.map(x => x.name)).toEqual(['TEAMDEE', 'JK']);
   });
 
   it('ตารางอื่นเปลี่ยน → ส่วนที่ไม่เกี่ยวยังเป็นตัวเดิม', () => {
     const raw = baseRaw();
-    raw.products = [product('p1', 'เสื้อ A')];
+    raw.brands = [brand('b1', 'TEAMDEE')];
     raw.tasks = [task('t1', 'งาน 1')];
     const a = mapToTMK(raw);
 
     raw.tasks = [task('t1', 'งาน 1'), task('t2', 'งาน 2')]; // เปลี่ยนแค่ tasks
     const b = mapToTMK(raw);
 
-    expect(b.products).toBe(a.products);   // สินค้าไม่ถูก map ใหม่
+    expect(b.brands).toBe(a.brands);         // ทีมไม่ถูก map ใหม่
     expect(b.tasks).not.toBe(a.tasks);     // งานถูก map ใหม่
     expect(b.tasks).toHaveLength(2);
   });
@@ -69,19 +69,17 @@ describe('mapToTMK — memo ต่อส่วน', () => {
     expect(mapToTMK(raw).campaigns[0].tasks).toBe(2); // ต้องไม่ค้างที่ 1
   });
 
-  it('customers ขึ้นกับ orders/customerTotals — ยอดสะสมต้องอัปเดตเมื่อออเดอร์เปลี่ยน', () => {
+  /* PART 118 — ระบบสินค้า/ออเดอร์/ลูกค้า "ยุคเก่า" ถูกถอดถาวร (Sale ใช้ tmk_mp_* แทน)
+     ล็อกไว้ด้วยเทส: ถ้ามีใครเผลอเอา section กลับมา จะได้รู้ว่ากำลังปลุกตารางที่ไม่มีใครเขียนแล้ว */
+  it('ตารางยุคเก่า (products/orders/customers) ต้องว่างเสมอ แม้ส่งข้อมูลเข้ามา', () => {
     const raw = baseRaw();
+    raw.products = [{ id: 'p1', name: 'เสื้อ A', price: 100, lots: [], reservations: [] }];
     raw.customers = [{ id: 'cu1', name: 'ลูกค้า A', created_at: '2026-08-01' }];
     raw.orders = [{ id: 'o1', customer_id: 'cu1', total: 100, status: 'paid', items: [], created_at: '2026-08-01' }];
-    expect(mapToTMK(raw).customers[0].totalSpent).toBe(100);
-
-    raw.orders = [
-      { id: 'o1', customer_id: 'cu1', total: 100, status: 'paid', items: [], created_at: '2026-08-01' },
-      { id: 'o2', customer_id: 'cu1', total: 250, status: 'paid', items: [], created_at: '2026-08-02' },
-    ];
-    const b = mapToTMK(raw);
-    expect(b.customers[0].totalSpent).toBe(350); // ต้องไม่ค้างที่ 100
-    expect(b.customers[0].orderCount).toBe(2);
+    const t = mapToTMK(raw);
+    expect(t.products).toEqual([]);
+    expect(t.orders).toEqual([]);
+    expect(t.customers).toEqual([]);
   });
 
   it('tasks ขึ้นกับ commentCounts — จำนวนคอมเมนต์ต้องอัปเดต', () => {
@@ -96,11 +94,11 @@ describe('mapToTMK — memo ต่อส่วน', () => {
 
   it('clearMapMemo() ล้างแคชจริง (logout → ข้อมูล user เดิมไม่ค้าง)', () => {
     const raw = baseRaw();
-    raw.products = [product('p1', 'เสื้อ A')];
+    raw.brands = [brand('b1', 'TEAMDEE')];
     const a = mapToTMK(raw);
     clearMapMemo();
     const b = mapToTMK(raw);
-    expect(b.products).not.toBe(a.products);                  // instance ใหม่
-    expect(b.products.map(p => p.name)).toEqual(['เสื้อ A']);  // ค่ายังถูก
+    expect(b.brands).not.toBe(a.brands);                     // instance ใหม่
+    expect(b.brands.map(x => x.name)).toEqual(['TEAMDEE']);    // ค่ายังถูก
   });
 });

@@ -122,3 +122,39 @@ export const dlt = (cur, prev) => {
   if (p === 0) return null;
   return { delta: `${p > 0 ? '+' : ''}${p}%`, deltaUp: p > 0 };
 };
+
+/* ============================================================
+   ลูกค้าที่น่าจะเป็นคนเดียวกัน (PART 110)
+   ============================================================
+   เกิดเพราะคีย์ต่างกัน: โปรไฟล์ผูก customer_code · ออเดอร์เก่าที่ไม่มีรหัสผูก 'N'+ชื่อ
+   → คนเดียวกันกลายเป็น 2 แถว ทำให้ยอดสะสม/RFM รายคนเพี้ยน (ยอดรวมบริษัทไม่กระทบ)
+   จับคู่ด้วย "เบอร์ที่เหลือแต่ตัวเลข" ก่อน แล้วค่อยชื่อที่ normalize แล้ว
+   คืน [{ reason, value, rows:[...] }] เรียงกลุ่มที่ยอดรวมเยอะก่อน — ใช้แค่ "ชี้เป้า" ไม่รวมให้อัตโนมัติ
+   ============================================================ */
+const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+const normName = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').replace(/[.\-_]/g, '').trim();
+
+export function findDuplicateCustomers(rows, { minPhoneLen = 9 } = {}) {
+  const list = (rows || []).filter(r => r && (r.key || r.code));
+  const byPhone = new Map(), byName = new Map();
+  list.forEach(r => {
+    const ph = digitsOnly(r.contact);
+    if (ph.length >= minPhoneLen) { const g = byPhone.get(ph) || []; g.push(r); byPhone.set(ph, g); }
+    const nm = normName(r.name);
+    if (nm.length >= 3) { const g = byName.get(nm) || []; g.push(r); byName.set(nm, g); }
+  });
+  const out = [];
+  const seen = new Set();
+  const keyOf = (r) => r.key || r.code;
+  const push = (reason, value, group) => {
+    const uniq = [...new Map(group.map(r => [keyOf(r), r])).values()];
+    if (uniq.length < 2) return;
+    const sig = uniq.map(keyOf).sort().join('|');
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    out.push({ reason, value, rows: uniq, sales: uniq.reduce((a, r) => a + (Number(r.sales) || 0), 0) });
+  };
+  byPhone.forEach((g, ph) => push('เบอร์เดียวกัน', ph, g));
+  byName.forEach((g, nm) => push('ชื่อเหมือนกัน', nm, g));
+  return out.sort((a, b) => b.sales - a.sales);
+}

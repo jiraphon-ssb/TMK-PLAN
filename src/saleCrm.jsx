@@ -13,21 +13,30 @@ import { useState, useEffect, useMemo } from 'react';
 import { N, Icon, useDelayedFlag, PersonAvatar } from './components.jsx';
 import { channelColor } from './charts.jsx';
 import { SideSheet } from './modals-core.jsx';
-import { TIER_CHIP, TIERS, PER_PAGE, CRM_SORT, STATUS_PRED, STATUS_OPTS, pageList, buildDirectory } from './lib/crmDirectory.js';
-import { buildCrmMonth, crmCustomerKey, crmTargetProgress } from './lib/crmAgg.js';
+import { TIER_CHIP, TIERS, PER_PAGE, CRM_SORT, STATUS_PRED, STATUS_OPTS, pageList, buildDirectory, findDuplicateCustomers } from './lib/crmDirectory.js';
+import { buildCrmMonth, crmCustomerKey, crmTargetProgress, isCrmOrder } from './lib/crmAgg.js';
 import { mergeOrderOverrides } from './lib/saleOverrides.js';
 import { fetchCrmTargets } from './lib/crmTargets.js';
+import { fetchContacts, saveContact, nextSnoozeISO, CONTACTS_MIGRATION } from './lib/crmContacts.js';
+import { pgErrorText } from './lib/pgError.js';
+import { buildFollowUpTask } from './lib/crmFollowUp.js';
+import { TMK } from './data.js';
+import { toast, openModal } from './lib/appBus.js';
 import { useUser } from './userContext.jsx';
 import { isAdmin } from './lib/roleAccess.js';
 import { fmtBaht } from './lib/money.js';
-import { cachedFetchAll, CUST_SEL, OVERRIDES_SEL } from './lib/saleData.js';
+import { cachedFetchAll, OVERRIDES_SEL, fetchCustomerProfiles } from './lib/saleData.js';
 import { useSaleLiveReload } from './lib/useSaleLive.js';
 import { T } from './lib/tables.js';
-import { usePersistedState } from './hooks/usePersistedState.js';
+import { usePersistedState, usePersistedMonth } from './hooks/usePersistedState.js';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { downloadCsv } from './lib/exportCsv.js';
 import { useTableSort, SortHead, CardTable } from './components/DataTableParts.jsx';
 import { MultiSelect, CrmSkeleton, CrmDashboard, CrmDayDetail } from './saleCrmPanels.jsx';
+import { crmNotesSummary, cohortRetention, RfmTiles, DuplicateCustomers } from './crmBlocks.jsx';
+import { RFM_TIERS } from './lib/saleAgg.js';
+import { supabase } from './lib/supabaseClient.js';
+import { todayISO } from './lib/dateUtils.js';
 import { CustomerDetail } from './saleCrmDetail.jsx';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,15 +47,14 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { EmptyState } from './components/EmptyState.jsx';
 
 const baht = (n) => fmtBaht(Number(n) || 0); // decimal-aware กลาง (lib/money.js)
-const todayISO = () => new Date().toISOString().slice(0, 10);
 try { localStorage.removeItem('tmk-crm-seller'); } catch { /* เลิก persist ตัวเลือกเซลล์ — เข้าใหม่ล็อคเซลล์หลักเสมอ (PART 87.2) */ }
 
 /* ---------- โหลดข้อมูล ---------- */
 // โปรไฟล์ — graceful เมื่อคอลัมน์เสริม (note/contact_channel/last_order) ยังไม่มี
 async function loadProfiles() {
-  let r = await cachedFetchAll('tmk_mp_customers', CUST_SEL + ',contact_channel,note,last_order');
-  if (r.error && /contact_channel|note|last_order|column/i.test(r.error.message || '')) r = await cachedFetchAll('tmk_mp_customers', CUST_SEL);
-  return r;
+  // ตัวโหลดกลาง (lib/saleData.js) — ลิ้นชักลูกค้าใช้ตัวเดียวกัน กันสอง select เพี้ยนออกจากกัน
+  const r = await fetchCustomerProfiles();
+  return { data: r.rows, error: r.error };
 }
 // source ต้องมี — ORDER_OV_KEY = `${source}:${order_no}` (merge override ระดับออเดอร์)
 // payment_type/cod_amount/customer_type/note/customer_phone/job_type — ไว้ใช้ในการ์ดออเดอร์ popup รายวัน (OVERRIDES_SEL มีครบ merge ต่อเนื่อง)
@@ -65,9 +73,13 @@ export function CrmView() {
   const [provF, setProvF] = usePersistedState('tmk-crm-provF', []);
   const [tierF, setTierF] = usePersistedState('tmk-crm-tierF', []);
   const [seg, setSeg] = usePersistedState('tmk-crm-seg', 'all'); // แยกช่องทาง: all | crm | phone | line
-  const [month, setMonth] = usePersistedState('tmk-crm-month', todayISO().slice(0, 7)); // แดชบอร์ด CRM
+  // เดือนของแดชบอร์ด CRM — จำได้ภายในเดือนเดียวกันเท่านั้น (เดิมค้างที่เดือนเก่าถาวร)
+  const [month, setMonth] = usePersistedMonth('tmk-crm-month');
   const [seller, setSeller] = useState(null); // scope เซลล์ CRM (session-only) · null = ยังไม่เลือก (default = เซลล์หลัก · เข้าใหม่ล็อคเสมอ) · '' = รวมทุกคน
   const [crmTargets, setCrmTargets] = useState([]); // เป้า CRM ต่อเซลล์ของเดือนที่ดู
+  const [monthNotes, setMonthNotes] = useState([]); // บันทึกประจำวันทั้งเดือน (กิจกรรมโทร/อัพเซลล์) — รื้อ 22 ส.ค.
+  const [contacts, setContacts] = useState([]);     // บันทึกการติดต่อรายลูกค้า (PART 110) — ของเดือนที่ดู
+  const [contactsMissing, setContactsMissing] = useState(false); // ยังไม่ได้รัน migration
   const { user } = useUser();
   const [dayOpen, setDayOpen] = useState(null); // 'YYYY-MM-DD' ที่กดในกราฟ → popup รายวัน
   const [sel, setSel] = useState(null);
@@ -87,39 +99,129 @@ export function CrmView() {
       if (p.error) { setErr(p.error.message); return; }
       // merge override (channel/ยอด/วันที่ ที่แอดมินแก้) ทับออเดอร์ดิบ — ให้ยอด CRM ตรง dashboard/perf
       const ovMap = {}; if (ov && !ov.error) (ov.data || []).forEach(x => { ovMap[x.order_id] = x; });
-      const orders = mergeOrderOverrides(o.error ? [] : (o.data || []), ovMap);
+      /* เดิม: o.error → [] เงียบ ๆ ขณะที่ p.error ข้างบนเตือน → มาตรฐานคนละอย่างในฟังก์ชันเดียวกัน
+       ผลคือยอด CRM / %ซื้อซ้ำ / ลิสต์ "ควรติดต่อ" / tier ลูกค้า ว่างหมดโดยไม่มีข้อความใด ๆ */
+    if (o.error) { setErr(o.error.message); return; }
+    const orders = mergeOrderOverrides(o.data || [], ovMap);
       setRaw({ profiles: p.data || [], orders });
     })();
     return () => { alive = false; };
   }, [rk]);
   // realtime: ออเดอร์/ลูกค้า/override เปลี่ยน → CRM เห็นสด (invalidate cache ก่อน refetch — บทเรียน PART 80)
-  useSaleLiveReload([T.mpOrders, T.mpCustomers, T.orderOverrides], () => setRk(k => k + 1), { invalidate: [T.mpOrders, T.mpCustomers, T.orderOverrides] });
+  // + tmk_crm_targets: แก้เป้า CRM ในหน้าตั้งค่า → หน้านี้เด้งตามทันที (เดิมค้างเลขเก่าจนรีเฟรช — user เจอ 100,000 ค้างทั้งที่แก้เป็น 70,000)
+  useSaleLiveReload([T.mpOrders, T.mpCustomers, T.orderOverrides, 'tmk_crm_targets'], () => setRk(k => k + 1), { invalidate: [T.mpOrders, T.mpCustomers, T.orderOverrides] });
+  // fallback ไม่พึ่ง realtime: กลับมาโฟกัสแท็บ/หน้า → refetch เป้า+ข้อมูลสด (กันเลขเป้าค้างกรณีตารางเป้าไม่อยู่ใน publication)
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === 'visible') setRk(k => k + 1); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
   // เป้า CRM ต่อเซลล์ของเดือนที่ดู (graceful [] ก่อน migration) · rk เพื่อ refresh หลังตั้งค่า
   const curYm = todayISO().slice(0, 7);
   const monthClamped = month > curYm ? curYm : month; // เดือน persisted อนาคต → clamp
   useEffect(() => { let alive = true; (async () => { const t = await fetchCrmTargets(monthClamped); if (alive) setCrmTargets(t); })(); return () => { alive = false; }; }, [monthClamped, rk]);
+  // บันทึกการติดต่อรายลูกค้าของเดือนที่ดู (PART 110) — ใช้ตัดลิสต์ "ควรติดต่อ" + เติมจำนวนสายให้บันทึกประจำวัน
+  useEffect(() => { let alive = true; (async () => {
+    const [yy, mm] = monthClamped.split('-').map(Number); const dim = new Date(yy, mm, 0).getDate();
+    /* ต้องดึงย้อนไป 45 วันก่อนต้นเดือนด้วย — การเลื่อนนัด (snooze) และ "ติดต่อล่าสุด" ข้ามเดือนได้
+       เดิมดึงเฉพาะเดือนที่ดู → ทุกวันที่ 1 ลูกค้าที่เลื่อนนัดไว้ปลายเดือนก่อนจะเด้งกลับขึ้นลิสต์เหมือนไม่เคยติดต่อ */
+    const startD = new Date(yy, mm - 1, 1); startD.setDate(startD.getDate() - 45);
+    const fromISO = `${startD.getFullYear()}-${String(startD.getMonth() + 1).padStart(2, '0')}-${String(startD.getDate()).padStart(2, '0')}`;
+    const r = await fetchContacts(fromISO, `${monthClamped}-${String(dim).padStart(2, '0')}`);
+    if (!alive) return;
+    setContacts(r.rows); setContactsMissing(!!r.missing);
+    // error จริง (ไม่ใช่ยังไม่ migrate) ต้องเห็น ไม่ใช่เงียบแล้วโชว์ลิสต์ว่าง
+    if (r.error && !r.missing) toast('โหลดบันทึกการติดต่อไม่สำเร็จ: ' + pgErrorText(r.error), 'error');
+  })(); return () => { alive = false; }; }, [monthClamped, rk]);
+
+  // บันทึกประจำวันทั้งเดือน (ทุกเซลล์ · กรอง scope ตอน render) — graceful ถ้าตาราง/คอลัมน์ data ยังไม่มี
+  useEffect(() => { let alive = true; (async () => {
+    const [yy, mm] = monthClamped.split('-').map(Number); const dim = new Date(yy, mm, 0).getDate();
+    let rows;
+    try {
+      let r = await supabase.from('tmk_crm_notes').select('salesperson,date,note,data').gte('date', `${monthClamped}-01`).lte('date', `${monthClamped}-${String(dim).padStart(2, '0')}`);
+      if (r.error && /column .*\bdata\b.* does not exist|schema cache/i.test(r.error.message || '')) r = await supabase.from('tmk_crm_notes').select('salesperson,date,note').gte('date', `${monthClamped}-01`).lte('date', `${monthClamped}-${String(dim).padStart(2, '0')}`);
+      rows = r.error ? [] : (r.data || []);
+    } catch { rows = []; }
+    if (alive) setMonthNotes(rows);
+  })(); return () => { alive = false; }; }, [monthClamped, rk]);
 
   // directory (ตารางลูกค้า all-time) + stats (แดชบอร์ด CRM รายเดือน) — derive จาก raw
   const data = useMemo(() => raw ? buildDirectory(raw.profiles, raw.orders, todayISO()) : null, [raw]);
   // statsAll = รวมทุกคน (ให้ bySeller + default เซลล์หลัก) · effSeller = seller ที่เลือก (null → default = เซลล์ CRM อันดับ 1)
   const statsAll = useMemo(() => raw ? buildCrmMonth(raw.orders, monthClamped, '') : null, [raw, monthClamped]);
-  const effSeller = seller === null ? (statsAll?.bySeller?.[0]?.name || '') : seller;
+  // D8 ([[crm-team-definition]]): ทีม CRM = คนที่มีเป้า CRM เดือนนั้น (ตอนนี้ = FAH) — ไม่ hardcode ชื่อ
+  const crmTeam = useMemo(() => crmTargets.filter(t => Number(t.sales_target) > 0).map(t => (t.salesperson || '').trim()).filter(Boolean), [crmTargets]);
+  // default = สมาชิกทีมคนแรก · ไม่มีทีม (ยังไม่ตั้งเป้า) → fallback เซลล์ CRM อันดับ 1 แบบเดิม + hint ใน header
+  const effSeller = seller === null ? (crmTeam[0] || statsAll?.bySeller?.[0]?.name || '') : seller;
+  // บันทึกผลการติดต่อ 1 คลิกจากการ์ด "ควรติดต่อ" (PART 110)
+  const logContact = async (row, { result, snoozeDays } = {}) => {
+    const t = todayISO();
+    const key = row.key || row.code;
+    const kind = row.grp === 'risk' ? 'repurchase' : row.grp === 'wait' ? '5day' : 'other';
+    const r = await saveContact({
+      customerKey: key, customerName: row.name || '', salesperson: effSeller || '', dateISO: t,
+      kind, result: result || 'answered',
+      snoozeUntil: result === 'snooze' ? nextSnoozeISO(t, snoozeDays || 7) : null,
+      by: user?.email || '',
+    });
+    if (r.error) {
+      toast(r.missing ? `ต้องรัน migration ${CONTACTS_MIGRATION} ใน Supabase ก่อน` : 'บันทึกไม่สำเร็จ: ' + pgErrorText(r.error), r.missing ? 'warn' : 'error');
+      return;
+    }
+    setContacts(c => [...c, r.row]);
+    toast(result === 'snooze' ? `เลื่อน "${row.name || key}" ไปอีก ${snoozeDays || 7} วัน` : result === 'no_answer' ? `บันทึก "ไม่รับสาย" แล้ว` : `บันทึกการติดต่อ "${row.name || key}" แล้ว`, 'success');
+  };
+  // วันนี้กรอกบันทึกประจำวันแล้วหรือยัง (ของเซลล์ที่กำลังดู · ดูรวมทีม = ถือว่ากรอกแล้วถ้ามีอย่างน้อย 1 คน)
+  const todayNoteFilled = (() => {
+    const t = todayISO();
+    if (t.slice(0, 7) !== monthClamped) return null;         // ไม่ได้ดูเดือนปัจจุบัน → ไม่ต้องเตือน
+    const rows = (monthNotes || []).filter(n => n.date === t && (effSeller ? n.salesperson === effSeller : true));
+    return rows.some(n => (n.note || '').trim() || n.data);
+  })();
   const stats = useMemo(() => {
     if (!raw) return null;
-    return effSeller === '' ? statsAll : buildCrmMonth(raw.orders, monthClamped, effSeller);
-  }, [raw, monthClamped, effSeller, statsAll]);
+    if (effSeller === '') return crmTeam.length ? buildCrmMonth(raw.orders, monthClamped, new Set(crmTeam)) : statsAll; // '' = รวมทีม CRM (ไม่ใช่ทุกเซลล์)
+    return buildCrmMonth(raw.orders, monthClamped, effSeller);
+  }, [raw, monthClamped, effSeller, statsAll, crmTeam]);
   // เป้า CRM: เลือกคน → เป้าคนนั้น · รวมทุกคน → ผลรวมเป้าทุกเซลล์ (ตรง requirement) · ความคืบหน้าเทียบยอดสะสม
   const target = useMemo(() => {
     if (!effSeller) return crmTargets.reduce((s, t) => s + (Number(t.sales_target) || 0), 0);
     return Number(crmTargets.find(t => t.salesperson === effSeller)?.sales_target) || 0;
   }, [crmTargets, effSeller]);
   const targetProg = useMemo(() => stats ? crmTargetProgress({ crmSales: stats.crmSales, month: monthClamped, target, todayISO: todayISO() }) : null, [stats, monthClamped, target]);
+  // เดือนก่อน (scope เดียวกัน) → เส้นประในกราฟรายวัน
+  const prevStats = useMemo(() => {
+    if (!raw) return null;
+    const [yy, mm] = monthClamped.split('-').map(Number); const pm = mm === 1 ? `${yy - 1}-12` : `${yy}-${String(mm - 1).padStart(2, '0')}`;
+    if (effSeller === '') return crmTeam.length ? buildCrmMonth(raw.orders, pm, new Set(crmTeam)) : buildCrmMonth(raw.orders, pm, '');
+    return buildCrmMonth(raw.orders, pm, effSeller);
+  }, [raw, monthClamped, effSeller, crmTeam]);
+  // โน้ตใน scope (เซลล์ที่เลือก / ทีม) → สรุปกิจกรรม
+  const notesSummary = useMemo(() => crmNotesSummary(monthNotes.filter(n => effSeller ? (n.salesperson || '').trim() === effSeller : (!crmTeam.length || crmTeam.includes((n.salesperson || '').trim())))), [monthNotes, effSeller, crmTeam]);
+  // ลูกค้า CRM (เคยซื้อผ่านโทร/LINE) สำหรับ ควรตามต่อ/RFM — รูปเดียวกับ CustomerTable กลาง
+  const crmCustRows = useMemo(() => (data || []).filter(c => c.segPhone || c.segLine).map(c => ({
+    key: c.key, code: c.key, name: c.name || c.key, contact: c.contact || c.social || '',
+    tier: c.tier, sales: c.sales, orders: c.count, aov: c.aov, last: c.last, recency: c.recency, flag: c.flag,
+    // ต้องส่งไปด้วย: cadence = ใช้ตัดสินกลุ่ม "ถึงรอบติดตาม" (ไม่ส่ง = กลุ่มนี้ไม่มีวันขึ้นเลย)
+    //               owner   = ใช้ตั้งผู้รับผิดชอบตอนสร้างงานติดตาม (ไม่ส่ง = งานไม่มีเจ้าของ)
+    cadence: c.cadence, owner: c.owner,
+  })), [data]);
+  // cohort: ลูกค้าที่ซื้อผ่าน LINE/โทรครั้งแรกในแต่ละเดือน (6 เดือนถึงเดือนที่ดู) กลับมาซื้ออีกกี่ % — สโคปเดียวกับ stats
+  // ลูกค้าที่น่าจะซ้ำ (เบอร์/ชื่อเดียวกันแต่คนละคีย์) — คิดจากรายชื่อทั้งหมด ไม่ผูกตัวกรองหน้า
+  const dupGroups = useMemo(() => findDuplicateCustomers(data || []), [data]);
+  const cohortRows = useMemo(() => {
+    if (!raw) return [];
+    const os = raw.orders.filter(o => isCrmOrder(o) && (effSeller ? (o.salesperson || '').trim() === effSeller : (!crmTeam.length || crmTeam.includes((o.salesperson || '').trim()))));
+    return cohortRetention(os, { keyOf: crmCustomerKey, asOfYm: monthClamped, months: 6 });
+  }, [raw, effSeller, crmTeam, monthClamped]);
   // ออเดอร์ที่ scope ตามเซลล์ (สำหรับ popup รายวัน)
   const dayOrders = useMemo(() => {
     const os = raw?.orders || [];
-    return effSeller ? os.filter(o => (o.salesperson || '').trim() === effSeller) : os;
-  }, [raw, effSeller]);
+    if (effSeller) return os.filter(o => (o.salesperson || '').trim() === effSeller);
+    return crmTeam.length ? os.filter(o => crmTeam.includes((o.salesperson || '').trim())) : os; // '' = รวมทีม CRM
+  }, [raw, effSeller, crmTeam]);
 
   // แก้โปรไฟล์จาก drawer → patch raw.profiles (ตาราง+memo คำนวณใหม่) + sel in-place (drawer ที่เปิดอยู่)
   const applyProfile = (key, row) => {
@@ -169,6 +271,11 @@ export function CrmView() {
     if (seg === 'line') return d.filter(c => c.segLine);
     return d;
   }, [data, seg]);
+  // สรุประดับ RFM ของ segment ที่เลือก (ชุดเดียวกับตาราง → เลขตรงกัน)
+  const rfmSummary = useMemo(() => {
+    const tot = segRows.reduce((a, r) => a + r.sales, 0);
+    return RFM_TIERS.map(t => { const g = segRows.filter(r => r.tier === t.key); const sl = g.reduce((a, r) => a + r.sales, 0); return { ...t, count: g.length, sales: sl, share: segRows.length ? g.length / segRows.length : 0, sharePct: tot ? sl / tot : 0, avg: g.length ? sl / g.length : 0 }; });
+  }, [segRows]);
   // ยอดที่เกี่ยวกับ segment (โทร→ยอดโทร · LINE→ยอดไลน์ · อื่น→ยอดรวม)
   const segSalesOf = (c) => seg === 'phone' ? c.phoneSales : seg === 'line' ? c.lineSales : c.sales;
 
@@ -212,13 +319,22 @@ export function CrmView() {
   return (
     <div className="content-inner rise" style={{ display: 'grid', gap: 14 }}>
       {/* แดชบอร์ดยอด CRM รายเดือน (โทร + LINE) — PART 87 · พาดหัวสลับเซลล์ได้ + กดแท่งดูรายวัน */}
-      {stats && <CrmDashboard stats={stats} month={monthClamped} setMonth={setMonth} curYm={curYm}
-        seller={effSeller} setSeller={setSeller}
+      {stats && <CrmDashboard stats={stats} prevStats={prevStats} month={monthClamped} setMonth={setMonth} curYm={curYm}
+        seller={effSeller} setSeller={setSeller} team={crmTeam} crmTargets={crmTargets}
         target={target} targetProg={targetProg} isAdminUser={isAdmin(user)}
+        notesSummary={notesSummary} custRows={crmCustRows} cohortRows={cohortRows}
+
+        onPickCustomer={(r) => { const c = (data || []).find(x => x.key === (r.key || r.code)); if (c) setSel(c); }}
+        contacts={contacts} contactsMissing={contactsMissing} onLogContact={logContact}
+        tasks={TMK.tasks || []} onFollowUp={(row) => openModal('task', buildFollowUpTask(row, { today: todayISO(), days: 0, owner: row.owner || '' }))}
+        onEditDay={(d) => setDayOpen(d)}
+        // กด "บันทึกวันนี้" ตอนดูรวมทีม → ล็อกไปที่เซลล์ CRM คนแรกก่อน (เดิมเปิดมาแล้วไม่มีฟอร์มให้กรอก)
+        onNewNote={() => { if (!effSeller && crmTeam.length) setSeller(crmTeam[0]); setDayOpen(todayISO()); }}
+        todayFilled={todayNoteFilled}
         onDayClick={(i) => { const d = stats.byDay[i]; if (d) setDayOpen(d.date); }} />}
 
       {/* คั่น: ด้านบน = แดชบอร์ดรายเดือน · ด้านล่าง = รายชื่อลูกค้าทั้งหมด (ไม่จำกัดเดือน) */}
-      <div className="row items-center gap-2" style={{ marginTop: 4, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+      <div id="crm-directory" className="row items-center gap-2" style={{ marginTop: 4, paddingTop: 12, borderTop: '1px solid var(--line)', scrollMarginTop: 70 }}>
         <Icon name="users" />
         <h2 className="m-0 text-lg font-bold leading-tight" style={{ color: 'var(--ink)' }}>รายชื่อลูกค้า</h2>
         <span className="cap" style={{ color: 'var(--ink-4)' }}>ทั้งหมด ไม่จำกัดเดือน</span>
@@ -231,6 +347,13 @@ export function CrmView() {
         {seg !== 'all' && <span className="cap" style={{ color: 'var(--ink-4)' }}>ลูกค้าที่เคยซื้อผ่านช่องนี้ หรือถูกตั้ง "ช่องทางติดต่อหลัก" ไว้</span>}
       </div>
 
+      {/* ระดับลูกค้า (RFM) — ชุดเดียวกับตารางด้านล่าง (ตาม segment ที่เลือก) · คลิก = กรองระดับของตาราง */}
+      <RfmTiles summary={rfmSummary} sel={tierF.length === 1 ? tierF[0] : 'all'} onPick={(k) => setTierF(k === 'all' ? [] : [k])}
+        title={`ระดับลูกค้า · ${SEGS.find(x => x[0] === seg)?.[1] || 'ทั้งหมด'}`} sub="ทุกเดือน · ต้องผ่านทั้ง ยอดซื้อ + ความถี่ + ความสดใหม่ · คลิกระดับ = กรองตารางด้านล่าง" />
+
+      {/* ลูกค้าที่น่าจะเป็นคนเดียวกัน (PART 110) — พับไว้ ไม่รบกวนถ้าไม่มี */}
+      <DuplicateCustomers groups={dupGroups} onPick={setSel} />
+
       {/* ตารางลูกค้า */}
       <Card className="p-4">
         <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -240,7 +363,7 @@ export function CrmView() {
             <CollapsibleTrigger asChild>
               <Button variant="outline" size="sm" className="gap-2 rounded-full">
                 <Icon name="filter" /> ตัวกรอง{nFilters > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">{nFilters}</Badge>}
-                <Icon name={filtersOpen ? 'up' : 'down'} />
+                <Icon name="chevD" style={filtersOpen ? { transform: 'rotate(180deg)' } : undefined} />
               </Button>
             </CollapsibleTrigger>
             {nFilters > 0 && <Button variant="ghost" size="sm" className="text-[var(--bad)]" onClick={clearFilters}><Icon name="x" /> ล้าง</Button>}
@@ -332,11 +455,11 @@ export function CrmView() {
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="cap" style={{ color: 'var(--ink-4)' }}>แสดง {N((pageClamped - 1) * PER_PAGE + 1)}–{N(Math.min(pageClamped * PER_PAGE, filtered.length))} จาก {N(filtered.length)} ราย</span>
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}><Icon name="left" /> ก่อนหน้า</Button>
+              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}><Icon name="chevL" /> ก่อนหน้า</Button>
               {pageList(pageClamped, totalPages).map((p, i) => p === '…'
                 ? <span key={'e' + i} className="px-1.5 text-[var(--ink-4)]">…</span>
                 : <Button key={p} variant={p === pageClamped ? 'default' : 'outline'} size="sm" className="min-w-9 px-0" onClick={() => setPage(p)}>{p}</Button>)}
-              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>ถัดไป <Icon name="right" /></Button>
+              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>ถัดไป <Icon name="chevR" /></Button>
             </div>
           </div>
         )}
@@ -348,7 +471,7 @@ export function CrmView() {
           title={`ออเดอร์ CRM วันที่ ${Number(dayOpen.slice(8, 10))}`}
           sub={`${dayOpen}${effSeller ? ` · ${effSeller}` : ' · รวมทุกคน'}`}
           onClose={() => setDayOpen(null)}>
-          <CrmDayDetail dateISO={dayOpen} orders={dayOrders} allOrders={raw?.orders} seller={effSeller} user={user}
+          <CrmDayDetail dateISO={dayOpen} orders={dayOrders} allOrders={raw?.orders} seller={effSeller} user={user} contacts={contacts}
             onPickCustomer={(o) => { const c = (data || []).find(x => x.key === crmCustomerKey(o)); setDayOpen(null); if (c) setSel(c); }} />
         </SideSheet>
       )}

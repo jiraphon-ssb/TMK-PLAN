@@ -519,7 +519,7 @@ function parsePage(rows, pageNo, pageW) {
   } else {
     // วันที่ผิดปกติ (อนาคต/เก่าผิดสังเกต) → เตือนให้ตรวจ ไม่บล็อก
     const today = new Date(); today.setDate(today.getDate() + 1);
-    if (order_date > today.toISOString().slice(0, 10)) warnings.push(`วันที่เป็นอนาคต (${order_date})`);
+    if (order_date > `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`) warnings.push(`วันที่เป็นอนาคต (${order_date})`);  // เทียบวันเครื่อง ไม่ใช่ UTC (ไม่งั้นก่อน 07:00 ใบของวันนี้โดนเตือนว่าอนาคต)
     else if (order_date < '2025-01-01') warnings.push(`วันที่เก่าผิดปกติ (${order_date})`);
   }
 

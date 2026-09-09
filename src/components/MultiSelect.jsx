@@ -38,15 +38,19 @@ export function MultiSelect({ label, icon, options = [], value = [], onChange, r
           {icon && <Icon name={icon} className="size-3.5" />}
           {label}
           {active && <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[11px]">{n}</Badge>}
-          <Icon name="down" className="size-3.5" />
+          <Icon name="chevD" className="size-3.5" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={6} className="max-h-72 w-56 overflow-auto">
-        <DropdownMenuLabel className="flex items-center justify-between py-1">
-          <span>{label}</span>
+        <DropdownMenuLabel className="flex items-center justify-between gap-2 py-1">
+          {/* บอกจำนวนที่เลือก/ทั้งหมด — เดิมไม่รู้ว่ามีตัวเลือกกี่ตัว ต้องเลื่อนดูเอง */}
+          <span className="min-w-0 truncate">
+            {label}
+            <span className="ml-1.5 font-normal text-[var(--ink-4)]">{active ? `${n}/${options.length}` : options.length}</span>
+          </span>
           {active && (
             <button
-              className="text-[12px] font-medium text-[var(--bad)] hover:underline"
+              className="shrink-0 text-[12px] font-medium text-[var(--bad)] hover:underline"
               onClick={(e) => { e.preventDefault(); onChange([]); }}
             >ล้าง</button>
           )}

@@ -21,7 +21,7 @@ const SheetOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SheetPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[6px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 ![animation-duration:420ms]",
+      "fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[6px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 ![animation-duration:420ms] data-[state=closed]:fill-mode-forwards data-[state=closed]:pointer-events-none",
       className
     )}
     {...props}
@@ -31,7 +31,7 @@ const SheetOverlay = React.forwardRef<
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
-  "fixed z-50 gap-4 bg-background p-6 shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out ![animation-timing-function:cubic-bezier(0.16,1,0.3,1)] data-[state=open]:![animation-duration:550ms] data-[state=closed]:![animation-duration:420ms]",
+  "fixed z-50 gap-4 bg-background p-6 shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out ![animation-timing-function:cubic-bezier(0.16,1,0.3,1)] data-[state=open]:![animation-duration:550ms] data-[state=closed]:![animation-duration:420ms] data-[state=closed]:fill-mode-forwards data-[state=closed]:pointer-events-none",
   {
     variants: {
       side: {

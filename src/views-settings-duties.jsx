@@ -128,19 +128,8 @@ export function DutiesView() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-      <Card className="bg-primary/5 border-l-4 border-l-primary shadow-none">
-        <CardContent className="p-5 flex gap-4 items-start">
-          <Icon name="sparkle" className="size-6 text-primary mt-1" />
-          <div>
-            <h3 className="text-lg font-bold mb-1 text-foreground">หน้าที่ / ตำแหน่ง</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              จัดการรายการหน้าที่ที่ใช้มอบหมายงาน — แต่ละผู้ใช้จะมี 1 หน้าที่ และในการสร้าง task คุณเลือก "ผู้รับผิดชอบ" จากหน้าที่เหล่านี้
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
+    <div className="flex flex-col gap-4 max-w-3xl w-full">
+      <p className="text-sm text-muted-foreground">ผู้ใช้ 1 คนมี 1 หน้าที่ · ใช้เลือก "ผู้รับผิดชอบ" ตอนสร้างงาน</p>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3 border-b border-border/50 bg-muted/20">
           <CardTitle className="text-lg flex items-center gap-2">

@@ -55,7 +55,15 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
     // ใช้ dateISO เต็ม (กันปีหายตอนแก้งานข้ามปี); fallback parse จากไทย/ค่าที่ส่งมา
     const isoDate = data?.dateISO || (data?.date ? (parseTaskDate(data.date) || data.date) : todayISO());
     const flow_id = data?.flow_id ?? data?.flow ?? '';
-    if (!data?.id) return { title: data?.title || '', detail: data?.detail || '', date: isoDate, dateEnd: '', responsible: [], channel: [], camp: '', brandIds: [], status: data?.status || 'todo', flow_id, priority: 'medium', tags: [], subtasks: [] }; // งานใหม่ prefill title/detail ได้ (เช่นปุ่ม "สร้างงานติดตาม" จาก CRM)
+    // งานใหม่: รับค่า prefill ให้ครบ (ปุ่ม "สร้างงานติดตาม" ของ CRM ส่ง แท็กผูกลูกค้า/ความสำคัญ/ช่องทาง/ผู้รับผิดชอบ มาด้วย)
+    // เดิมรับแค่ title/detail/date แล้วทิ้งที่เหลือ → งานที่สร้างไม่รู้ว่าเป็นของลูกค้าคนไหน (PART 111)
+    if (!data?.id) return {
+      title: data?.title || '', detail: data?.detail || '', date: isoDate, dateEnd: data?.dateEnd || '',
+      responsible: splitToArr(data?.responsible), channel: splitToArr(data?.channel),
+      camp: data?.camp || '', brandIds: Array.isArray(data?.brandIds) ? data.brandIds : [],
+      status: data?.status || 'todo', flow_id, priority: data?.priority || 'medium',
+      tags: Array.isArray(data?.tags) ? data.tags : [], subtasks: [],
+    };
     const validNames = new Set((MD.channels || []).map(c => c.name));
     const chanPieces = splitToArr(data.channel);
     // เก็บเฉพาะช่องทางที่มีจริงในระบบ — ตัดข้อความอิสระเก่า (เช่น "FB Post") ที่ map ไม่ได้ทิ้ง
@@ -93,10 +101,23 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
     return { ...p, [k]: arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v] };
   }); };
   const valid = f.title.trim();
+  const [tryEmpty, setTryEmpty] = useState(false); // กดบันทึกทั้งที่ยังไม่ใส่ชื่อ → ขึ้นข้อความใต้ช่อง (เดิมปุ่มจางเฉยๆ ไม่บอกว่าทำไม)
   const [submitting, setSubmitting] = useState(false); // กันกดบันทึกซ้ำ → งานซ้ำ
   const taskId = useMemo(() => data?.id || uid('tn'), [data?.id]); // id เดียวต่อการเปิดฟอร์ม (กดซ้ำไม่ได้ id ใหม่)
   const close = () => guardClose(touched, onClose);
-  const submit = () => { if (!valid || submitting) return; setSubmitting(true); onSubmit({ ...f, id: taskId }); };
+  const submit = () => { if (!valid) { setTryEmpty(true); return; } if (submitting) return; setSubmitting(true); onSubmit({ ...f, id: taskId }); };
+  // คีย์ลัด: Cmd/Ctrl + Enter = บันทึก (พิมพ์เสร็จไม่ต้องลากเมาส์ไปปุ่ม)
+  /* Cmd/Ctrl+Enter = บันทึกงาน — แต่ต้องไม่ยิงเมื่อคีย์ลัดนั้นถูกใช้ในช่องย่อยอยู่แล้ว
+     (กล่องคอมเมนต์/ช่องแท็ก/ช่องงานย่อย ใช้ Enter เป็น "ส่ง/เพิ่ม" และไม่ได้ stopPropagation)
+     เดิม: พิมพ์คอมเมนต์แล้วกด Cmd+Enter → คอมเมนต์ถูกส่ง "และ" งานถูกบันทึก+ปิด popup ไปเลย */
+  const inSubField = (el) => !!(el && typeof el.closest === 'function' && el.closest('[data-no-form-submit]'));
+  const onKeyDownForm = (e) => {
+    if (!((e.metaKey || e.ctrlKey) && e.key === 'Enter')) return;
+    if (inSubField(e.target)) return;
+    e.preventDefault(); submit();
+  };
+  // ปุ่มวันด่วน — งานส่วนใหญ่กำหนดเป็นวันนี้/พรุ่งนี้/สัปดาห์หน้า
+  const shiftDays = (n) => { const d = new Date(todayISO() + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   const doDelete = async () => { if (!(edit && onDelete)) return; if (await confirm({ title: 'ลบงาน', body: `ลบงาน "${data.title}"?\nงานจะถูกย้ายไปถังขยะ (กู้คืนได้)`, danger: true, confirmText: 'ลบ' })) onDelete(data); };
   const flowObj = f.flow_id ? flowOptions.find(fl => fl.id === f.flow_id) : genCfg;
   const setFlow = (v) => {
@@ -119,9 +140,9 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
           ? <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 mr-auto" onClick={doDelete}><Icon name="trash" className="size-4 mr-1" /> ลบงาน</Button>
           : <span className="mr-auto" />}
         <Button variant="outline" size="sm" onClick={close}>ยกเลิก</Button>
-        <Button size="sm" disabled={!valid || submitting} onClick={submit}><Icon name="check" className="size-4 mr-1" /> {submitting ? 'กำลังบันทึก…' : 'บันทึก'}</Button>
+        <Button size="sm" disabled={submitting} onClick={submit} title="Cmd/Ctrl + Enter"><Icon name="check" className="size-4 mr-1" /> {submitting ? 'กำลังบันทึก…' : 'บันทึก'}</Button>
       </>}>
-      <div className={twoCol ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_372px] gap-5 lg:gap-0 items-start' : 'flex flex-col gap-4'}>
+      <div onKeyDown={onKeyDownForm} className={twoCol ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_372px] gap-5 lg:gap-0 items-start' : 'flex flex-col gap-4'}>
         <div className="flex flex-col min-w-0">
           <div className={'flex flex-col gap-4' + (twoCol ? ' lg:pr-6' : '')}>
         {/* ชื่องาน + โครงการที่สังกัด (breadcrumb เล็ก) */}
@@ -130,8 +151,10 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
             <FlowIcon icon={flowObj?.icon} className="size-3.5" /><span className="truncate">{flowObj?.name || 'งานทั่วไป'}</span>
             <Icon name="chevR" className="size-3 opacity-50" /><span>{edit ? 'แก้ไขงาน' : 'งานใหม่'}</span>
           </div>
-          <Input value={f.title} onChange={e => set('title', e.target.value)} placeholder="ตั้งชื่องาน…" autoFocus={!edit}
+          <Input value={f.title} onChange={e => { set('title', e.target.value); if (tryEmpty) setTryEmpty(false); }} placeholder="ตั้งชื่องาน…" autoFocus={!edit}
+            aria-invalid={tryEmpty && !valid} aria-describedby={tryEmpty && !valid ? 'task-title-err' : undefined}
             className="border-0 px-0 shadow-none text-xl sm:text-2xl font-bold h-auto py-1 focus-visible:ring-0 placeholder:text-muted-foreground/40" />
+          {tryEmpty && !valid && <div id="task-title-err" role="alert" className="text-xs" style={{ color: 'var(--bad)' }}>ใส่ชื่องานก่อนถึงจะบันทึกได้</div>}
         </div>
 
         {/* การ์ดฟิลด์ทรง FormSection เหมือน popup ออเดอร์ — กลุ่ม "รายละเอียดงาน" + "กำหนดการ & ทีม" */}
@@ -201,10 +224,20 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
         <Section icon="calendarDays" title="กำหนดการ & ทีม">
         <div className="grid grid-cols-1 gap-y-1">
           <TaskField icon="calendarDays" label="วันที่" wide>
-            <div className="flex items-center gap-2 flex-wrap">
-              <DatePicker value={f.date} onChange={(v) => set('date', v)} clearable={false} className="w-40" />
-              <Icon name="arrowR" className="size-4 text-muted-foreground shrink-0" />
-              <DatePicker value={f.dateEnd || ''} min={f.date} placeholder="วันสิ้นสุด" onChange={(v) => set('dateEnd', v)} className="w-40" />
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <DatePicker value={f.date} onChange={(v) => set('date', v)} clearable={false} className="w-40" />
+                <Icon name="arrowR" className="size-4 text-muted-foreground shrink-0" />
+                <DatePicker value={f.dateEnd || ''} min={f.date} placeholder="วันสิ้นสุด" onChange={(v) => set('dateEnd', v)} className="w-40" />
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {[['วันนี้', 0], ['พรุ่งนี้', 1], ['+7 วัน', 7]].map(([l, n]) => (
+                  <button type="button" key={l} onClick={() => set('date', shiftDays(n))}
+                    className="rounded-full border px-2.5 py-0.5 text-[11.5px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    style={{ borderColor: 'var(--line)' }}>{l}</button>
+                ))}
+                {f.dateEnd && <button type="button" onClick={() => set('dateEnd', '')} className="text-[11.5px] text-muted-foreground underline">ล้างวันสิ้นสุด</button>}
+              </div>
             </div>
           </TaskField>
           <TaskField icon="users" label="ผู้รับผิดชอบ" wide>
@@ -229,7 +262,7 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
               {(f.tags || []).map(tg => (
                 <Toggle key={tg} variant="pill" size="sm" pressed onPressedChange={() => set('tags', (f.tags || []).filter(x => x !== tg))} title="คลิกเพื่อลบ">{tg} <span style={{ marginLeft: 4, opacity: 0.6 }}>✕</span></Toggle>
               ))}
-              <Input value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="เพิ่มแท็ก + Enter"
+              <Input data-no-form-submit value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="เพิ่มแท็ก + Enter"
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const v = tagInput.trim(); if (v && !(f.tags || []).includes(v)) set('tags', [...(f.tags || []), v]); setTagInput(''); } }}
                 className="w-40 h-8" />
             </div>
@@ -273,7 +306,7 @@ export function TaskModal({ data, onClose, onSubmit, onDelete }) {
               </div>
             ))}
           </div>
-          <Input value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="เพิ่มงานย่อย + Enter" className="h-8"
+          <Input data-no-form-submit value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="เพิ่มงานย่อย + Enter" className="h-8"
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const v = subInput.trim(); if (v) set('subtasks', [...(f.subtasks || []), { id: uid('st'), text: v, done: false }]); setSubInput(''); } }} />
         </div>
 
@@ -488,7 +521,7 @@ function TaskComments({ taskId, flow, onUnavailable }) {
           </div>
           {editId === c.id ? (
             <div className="mt-1 flex flex-col gap-1.5">
-              <Textarea value={editText} onChange={e => setEditText(e.target.value)} rows={2} className="resize-y text-sm" />
+              <Textarea data-no-form-submit value={editText} onChange={e => setEditText(e.target.value)} rows={2} className="resize-y text-sm" />
               <div className="flex gap-2"><Button size="sm" className="h-7" onClick={() => saveEdit(c.id)}>บันทึก</Button><Button size="sm" variant="ghost" className="h-7" onClick={() => { setEditId(null); setEditText(''); }}>ยกเลิก</Button></div>
             </div>
           ) : (
@@ -563,7 +596,7 @@ function TaskComments({ taskId, flow, onUnavailable }) {
           <TBtn title="รายการ" onClick={() => insertAtCursor('\n- ')}><Icon name="listChecks" className="size-4" /></TBtn>
           <TBtn title="กล่าวถึง (@)" onClick={() => insertAtCursor('@')}>@</TBtn>
         </div>
-        <Textarea ref={taRef} value={body} onChange={onBodyChange} rows={2} placeholder="เขียนความคิดเห็น…"
+        <Textarea data-no-form-submit ref={taRef} value={body} onChange={onBodyChange} rows={2} placeholder="เขียนความคิดเห็น…"
           className="border-0 shadow-none focus-visible:ring-0 resize-none min-h-[44px] text-sm"
           onKeyDown={e => {
             if (mentionActive && filteredMentions.length) {

@@ -5,6 +5,7 @@
    กฎ §18: track ตอน subscribe · update section แบบ throttle ≥3-5วิ · ไม่เขียน DB · ไม่ track mouse
    injectable channelFactory + now() → unit-test ได้ (ไม่ต้องต่อ Supabase จริง)
    **ยังไม่ wire** (behind flag presence_v2) — cutover heartbeat ต้อง verify ด้วย 2 users (§27)
+   ⚠️ ยังไม่ wire — primitive ของ REALTIME-C2-PLAN (ดู src/realtime/README.md) · อย่าลบเพราะ "ไม่มีใคร import"
    ============================================================ */
 
 /**

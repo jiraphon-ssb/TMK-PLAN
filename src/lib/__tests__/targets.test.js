@@ -68,3 +68,42 @@ describe('targetsByPerson / targetId', () => {
     expect(targetsByPerson([]).size).toBe(0);
   });
 });
+
+/* ============================================================
+   saveTarget ต้องไม่ลบของที่ผู้เรียกไม่ได้ส่งมา (8 ก.ย. 69)
+   ============================================================
+   บั๊กจริง: saveTarget มี default `tiers = null, note = ''` แล้วเขียน `tiers: tiers || null` เสมอ
+   ผู้เรียกเดียวในระบบ (views-settings-tabs.jsx) ส่งแค่ sales_target + commission_rate
+   → ทุกครั้งที่แอดมินแก้เป้ายอด (auto-save on blur) ขั้นบันไดค่าคอมถูกล้างเป็น NULL เงียบ ๆ
+   แต่ commissionFor() อ่าน tiers อยู่จริง → ค่าคอมกลับไปใช้ flat rate ซึ่งอาจเป็น 0 = ฿0 ทั้งกระดาน
+   ============================================================ */
+describe('saveTarget — ไม่ลบฟิลด์ที่ไม่ได้ส่งมา', () => {
+  it('buildTargetRow: ไม่ส่ง tiers/note → ต้องไม่มีคีย์นั้นในแถวที่เขียน (ของเดิมใน DB รอด)', async () => {
+    const { buildTargetRow } = await import('../targets.js');
+    const row = buildTargetRow({ salesperson: 'ฟ้า', month: '2026-09', sales_target: 500000, commission_rate: 3 });
+    expect(row.sales_target).toBe(500000);
+    expect(row.commission_rate).toBe(3);
+    expect('tiers' in row).toBe(false);
+    expect('note' in row).toBe(false);
+  });
+
+  it('ส่ง tiers มา → เขียนตามที่ส่ง', async () => {
+    const { buildTargetRow } = await import('../targets.js');
+    const tiers = [{ min: 500000, rate: 5 }];
+    expect(buildTargetRow({ salesperson: 'ฟ้า', month: '2026-09', tiers }).tiers).toEqual(tiers);
+  });
+
+  it('ส่ง tiers = null มาตรง ๆ → ตั้งใจล้าง เขียน null ได้', async () => {
+    const { buildTargetRow } = await import('../targets.js');
+    const row = buildTargetRow({ salesperson: 'ฟ้า', month: '2026-09', tiers: null });
+    expect('tiers' in row).toBe(true);
+    expect(row.tiers).toBeNull();
+  });
+
+  it('ขั้นบันไดยังทำงานหลังเซฟเป้า (คอมไม่ตกไป flat rate)', async () => {
+    const { commissionFor } = await import('../targets.js');
+    const target = { commission_rate: 0, tiers: [{ min: 500000, rate: 5 }, { min: 0, rate: 2 }] };
+    expect(commissionFor(600000, target)).toBe(30000);      // ใช้ขั้น 5%
+    expect(commissionFor(600000, { commission_rate: 0 })).toBe(0);   // ถ้า tiers ถูกล้าง = ฿0
+  });
+});

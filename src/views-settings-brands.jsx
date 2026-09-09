@@ -6,6 +6,7 @@
    ============================================================ */
 import { useState } from 'react';
 import { TMK } from './data.js';
+import { ReorderButtons } from './components/ReorderButtons.jsx';
 import { Icon, ColorPicker } from './components.jsx';
 import { useData } from './dataContext.jsx';
 import { supabase } from './lib/supabaseClient.js';
@@ -134,19 +135,8 @@ export function BrandsView() {
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
-      <Card className="bg-primary/5 border-l-4 border-l-primary shadow-none">
-        <CardContent className="p-5 flex gap-4 items-start">
-          <Icon name="store" className="size-6 text-primary mt-1" />
-          <div>
-            <h3 className="text-lg font-bold mb-1 text-foreground">แบรนด์</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              จัดการรายชื่อแบรนด์ — แต่ละโครงการ (board วางแผนงาน) เลือกแบรนด์มาใช้เป็นป้ายกำกับได้ · เพิ่ม/ลบ/แก้โลโก้/สี และจัดเรียงลำดับ
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
+    <div className="flex flex-col gap-4 max-w-3xl w-full">
+      <p className="text-sm text-muted-foreground">แต่ละโครงการเลือกแบรนด์ไปใช้เป็นป้ายกำกับงานได้</p>
       {need ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-2">
@@ -184,16 +174,8 @@ export function BrandsView() {
                     onDrop={() => { if (dragId) reorderBrand(dragId, b.id); setDragId(null); setDragOver(null); }}
                     className="flex items-center gap-3 p-4 border-b border-border/50 last:border-b-0 cursor-move transition-colors"
                     style={{ background: isOver ? 'hsl(var(--accent)/0.1)' : 'transparent', opacity: dragId === b.id ? 0.4 : 1 }}>
-                    <div className="hidden sm:flex shrink-0 text-muted-foreground/50" title="ลากเพื่อเรียงลำดับ">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="9" cy="6" r="1.5" fill="currentColor" /><circle cx="9" cy="12" r="1.5" fill="currentColor" /><circle cx="9" cy="18" r="1.5" fill="currentColor" />
-                        <circle cx="15" cy="6" r="1.5" fill="currentColor" /><circle cx="15" cy="12" r="1.5" fill="currentColor" /><circle cx="15" cy="18" r="1.5" fill="currentColor" />
-                      </svg>
-                    </div>
-                    <div className="flex sm:hidden flex-col gap-1 shrink-0 px-1" onClick={e => e.stopPropagation()}>
-                      <button className="text-muted-foreground disabled:opacity-30 p-1" disabled={idx === 0 || busy} onClick={() => reorderBrand(b.id, brands[idx - 1].id)}>▲</button>
-                      <button className="text-muted-foreground disabled:opacity-30 p-1" disabled={idx === brands.length - 1 || busy} onClick={() => reorderBrand(b.id, brands[idx + 1].id)}>▼</button>
-                    </div>
+                    <ReorderButtons label={b.name} index={idx} total={brands.length} disabled={busy}
+                      onMove={(d) => reorderBrand(b.id, brands[idx + d].id)} />
                     {b.logoUrl ? (
                       <img src={b.logoUrl} alt={b.name} className="w-10 h-10 rounded-lg object-contain shrink-0 border bg-white" />
                     ) : (

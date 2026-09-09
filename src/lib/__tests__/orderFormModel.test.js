@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { blankLine, lineAmount, sumLines, sumQty, skuToLine, effectiveTotal, N } from '../orderFormModel.js';
+import { blankLine, lineAmount, sumLines, sumQty, skuToLine, effectiveTotal, reconcileLines, N } from '../orderFormModel.js';
 
 describe('orderFormModel — line unit-price', () => {
   it('N: number-or-0', () => { expect(N('12.5')).toBe(12.5); expect(N('')).toBe(0); expect(N(null)).toBe(0); });
@@ -56,5 +56,28 @@ describe('orderFormModel — line unit-price', () => {
   it('skuToLine: qty 0 กันหารศูนย์ (price = line_sales)', () => {
     const l = skuToLine({ id: 'x', qty: 0, line_sales: 50, design: 'A' });
     expect(l.price).toBe('50'); expect(lineAmount(l)).toBe(50);
+  });
+});
+
+describe('orderFormModel — reconcileLines (กระทบยอดรายการ vs ราคาเสื้อ)', () => {
+  const lines = [{ qty: '1', price: '279' }];
+  it('มีค่าส่ง: รายการ 279 + ส่ง 30 = ยอด 309 → match (เดิมเตือนผิด)', () => {
+    const r = reconcileLines({ lines, total: '309', shipping: '30', discount: '', vat: '', subtotal: '' });
+    expect(r.match).toBe(true); expect(r.expected).toBe(279); expect(r.parts).toEqual([{ label: 'ค่าส่ง', val: 30 }]); expect(r.basis).toBe('total');
+  });
+  it('ส่วนลด: รายการ 300 − ลด 21 = ยอด 279 → match', () => {
+    const r = reconcileLines({ lines: [{ qty: '1', price: '300' }], total: '279', discount: '21', shipping: '', vat: '', subtotal: '' });
+    expect(r.match).toBe(true); expect(r.expected).toBe(300);
+  });
+  it('ไม่ตรงจริง: รายการ 279 แต่ยอด 309 ไม่มีค่าส่ง → mismatch', () => {
+    const r = reconcileLines({ lines, total: '309', shipping: '', discount: '', vat: '', subtotal: '' });
+    expect(r.match).toBe(false); expect(r.expected).toBe(309);
+  });
+  it('ราคาเสื้อกรอกเอง = ฐานเทียบ', () => {
+    const r = reconcileLines({ lines, total: '309', subtotal: '279', shipping: '30', discount: '', vat: '' });
+    expect(r.match).toBe(true); expect(r.basis).toBe('subtotal');
+  });
+  it('ฟอร์มเปล่า → null (ไม่โชว์ ✓ เขียวหลอก)', () => {
+    expect(reconcileLines({ lines: [{ qty: '1', price: '' }], total: '', shipping: '', discount: '', vat: '', subtotal: '' })).toBeNull();
   });
 });

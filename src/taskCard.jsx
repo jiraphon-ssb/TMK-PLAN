@@ -7,6 +7,7 @@ import { Icon, Avatar } from './components.jsx';
 import { todayISO, thaiDate } from './lib/dateUtils.js';
 import { colorForTask, colorSourceOf } from './lib/taskColor.js';
 import { Card } from '@/components/ui/card';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { DD, onCardKey, _isoToDate, _dateToIso } from './saleWidgets.jsx';
 
 /* ---- Channel → platform icon (ใช้ร่วม Calendar / Kanban / Timeline) ---- */
@@ -69,7 +70,7 @@ function TaskChannels({ channel, size = 16 }) {
 
 /* ---- TaskCard: การ์ดงานใช้ซ้ำ (shadcn Card) — Kanban / My Tasks / read-only share ----
    props: task · onClick · draggable+onDragStart/onDragEnd · statusColumns+onStatusChange (มือถือ) · readOnly · showFlow (ชิปโครงการ) */
-export function TaskCard({ task: t, onClick, draggable, onDragStart, onDragEnd, statusColumns, onStatusChange, readOnly, showFlow }) {
+export function TaskCard({ task: t, onClick, draggable, onDragStart, onDragEnd, statusColumns, onStatusChange, readOnly, showFlow, hideDate }) {
   const c = DD.campaigns.find(x => x.id === t.camp) || null;
   const taskFlow = (DD.flows || []).find(fl => (fl.scopeId ?? fl.id ?? '') === (t.flow || '')) || null;
   const flowChip = showFlow ? (taskFlow || (t.flow ? null : { name: 'งานทั่วไป', color: 'var(--ink-3)' })) : null;
@@ -108,7 +109,7 @@ export function TaskCard({ task: t, onClick, draggable, onDragStart, onDragEnd, 
       onDragStart={draggable && !readOnly ? onDragStart : undefined}
       onDragEnd={draggable && !readOnly ? onDragEnd : undefined}
       onClick={clickable ? onClick : undefined}
-      className="p-3" style={{ borderRadius: 'var(--r)', cursor: readOnly ? 'default' : (draggable ? 'grab' : (onClick ? 'pointer' : 'default')), boxShadow: 'var(--sh-sm)', padding: '12px 14px', borderLeft: `3px solid ${colorForTask(t, colorSourceOf(taskFlow), 'var(--line)')}` }}>
+      className="p-3" style={{ borderRadius: 'var(--r)', cursor: readOnly ? 'default' : (draggable ? 'grab' : (onClick ? 'pointer' : 'default')), boxShadow: 'var(--sh-sm)', padding: '12px 14px', borderLeft: `3px solid ${dueState === 'overdue' ? 'var(--bad)' : colorForTask(t, colorSourceOf(taskFlow), 'var(--line)')}` }}>
       {/* หัว: มีชิป → แถวชิป(โครงการ/แคมเปญ/แบรนด์)+avatar แล้วค่อยชื่อ · ไม่มีชิป → ชื่อ+avatar บรรทัดเดียว */}
       {headerChips.length ? (
         <>
@@ -136,7 +137,7 @@ export function TaskCard({ task: t, onClick, draggable, onDragStart, onDragEnd, 
       )}
       {/* meta: วันที่ + เลยกำหนด/ใกล้ครบ + เช็คลิสต์ + ความสำคัญ */}
       <div className="row wrap" style={{ gap: 6, alignItems: 'center', marginTop: 7 }}>
-        <span className="cap inline-flex items-center gap-1"><Icon name="calendarDays" className="size-3.5" />{dateLabel}</span>
+        {!hideDate && <span className="cap inline-flex items-center gap-1"><Icon name="calendarDays" className="size-3.5" />{dateLabel}</span>}
         {dueState === 'overdue' && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-500/15 text-red-600 dark:text-red-400">เลยกำหนด</span>}
         {dueState === 'soon' && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-500/15 text-amber-600 dark:text-amber-400">ใกล้ครบ</span>}
         {subs.length > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1 ${subDone === subs.length ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground'}`}><Icon name="listChecks" className="size-3" />{subDone}/{subs.length}</span>}
@@ -151,13 +152,29 @@ export function TaskCard({ task: t, onClick, draggable, onDragStart, onDragEnd, 
           {t.commentCount > 0 && <span className="cap inline-flex items-center gap-1" style={{ marginLeft: 'auto' }} title={`${t.commentCount} ความคิดเห็น`}><Icon name="chat" className="size-3.5" />{t.commentCount}</span>}
         </div>
       )}
+      {/* ทางเลือกแทนการลาก (WCAG 2.2 · dragging movements) — เมนู "ย้าย" ใช้ได้ทั้งเมาส์/คีย์บอร์ด/มือถือ
+          เดิมเป็น <select> ที่โผล่เฉพาะจอเล็ก → เดสก์ท็อปย้ายได้ทางลากอย่างเดียว */}
       {statusColumns && onStatusChange && !readOnly && (
-        <select className="mobile-only" value={t.status} aria-label="ย้ายสถานะงาน"
-          onClick={e => e.stopPropagation()}
-          onChange={e => { e.stopPropagation(); onStatusChange(t.id, e.target.value); }}
-          style={{ marginTop: 7, maxWidth: '100%', padding: '3px 6px', fontSize: 'var(--fs-cap)', height: 'auto', color: 'var(--ink-3)', fontFamily: 'var(--font)', border: '1px solid var(--line)', borderRadius: 'var(--r-xs)', background: 'transparent', cursor: 'pointer' }}>
-          {statusColumns.map(k => <option key={k.id} value={k.id}>ย้ายไป {k.label}</option>)}
-        </select>
+        <div className="mt-2 flex" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" aria-label={`ย้ายสถานะงาน ${t.title}`} title="ย้ายสถานะงาน"
+                className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                style={{ borderColor: 'var(--line)' }}>
+                <Icon name="arrowR" className="size-3" /> ย้าย
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-40">
+              {statusColumns.map(k => (
+                <DropdownMenuItem key={k.id} disabled={k.id === t.status} onSelect={() => onStatusChange(t.id, k.id)} className="gap-2">
+                  <span className="size-2 rounded-full shrink-0" style={{ background: k.color || 'var(--ink-3)' }} />
+                  <span className="flex-1 truncate">{k.label}</span>
+                  {k.id === t.status && <Icon name="check" className="size-3.5" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       )}
     </Card>
   );

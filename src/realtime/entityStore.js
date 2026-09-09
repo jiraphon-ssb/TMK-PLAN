@@ -8,6 +8,7 @@
    - event.entity_version > current+1 → gap (ต้อง sync เฉพาะ entity · §5.3/§15)
    pure → unit-test ได้ (§28 Unit: patch reducers · version gap detection)
    ยังไม่ wire dataContext (TMK เป็น holistic derived object · ต้อง refactor แยก · session เฉพาะ)
+   ⚠️ ยังไม่ wire — primitive ของ REALTIME-C2-PLAN (ดู src/realtime/README.md) · อย่าลบเพราะ "ไม่มีใคร import"
    ============================================================ */
 
 /** สร้าง store ว่าง (mutable object · แต่ apply เป็น pure-ish: คืน status + แก้ store in-place) */

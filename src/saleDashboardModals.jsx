@@ -7,10 +7,11 @@ import { N } from './components.jsx';
 import { SideSheet } from './modals-core.jsx';
 import { MetricCard, HBars } from './charts.jsx';
 import { compute } from './lib/saleAgg.js';
-import { OrderCard, daySummary, DayTiles, useOrderFinancials, finOf } from './orderCard.jsx';
 import { baht } from './lib/saleDashboardHelpers.js';
+import { DayDetailSheet } from './dayDetailSheet.jsx';
 import { CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+
 
 // ---------- drill-down modal ----------
 export function DrillModal({ drill, orders, skus, eff, onClose }) {
@@ -37,28 +38,9 @@ export function DrillModal({ drill, orders, skus, eff, onClose }) {
 }
 
 // CustomerDrawer ย้ายไปเป็นของกลางใน customerDrawer.jsx (PART 88) — ประวัติซื้อเป็นแถวย่อกดขยาย
-// popup วัน (คลิกแถวตารางโอน/COD) — tiles 10 ช่องชุดเดียวกับหน้าประสิทธิภาพเซลล์ + การ์ดออเดอร์กลาง (โชว์เซลล์)
-export function DashDayDetail({ dateISO, ords, skus, funnelRows, onPickCustomer }) {
-  const dayOrds = useMemo(() => (ords || []).filter(o => o.order_date === dateISO)
-    .sort((a, b) => (Number(b.sales) || 0) - (Number(a.sales) || 0)), [ords, dateISO]);
-  const skuBy = useMemo(() => {
-    const noSet = new Set(dayOrds.map(o => o.order_no));
-    const m = new Map();
-    (skus || []).forEach(k => { if (!noSet.has(k.order_no)) return; const arr = m.get(k.order_no) || []; arr.push(k); m.set(k.order_no, arr); });
-    return m;
-  }, [skus, dayOrds]);
-  const finBy = useOrderFinancials(dayOrds); // ส่วนลด/ค่าส่ง/VAT — batch ตอน popup เปิด
-  return (
-    <div className="flex flex-col gap-4">
-      <DayTiles s={daySummary(dayOrds, funnelRows)} />
-      <div>
-        <div className="text-sm font-semibold mb-1.5" style={{ color: 'var(--ink)' }}>ออเดอร์ทั้งวัน ({N(dayOrds.length)})</div>
-        {dayOrds.length === 0
-          ? <div className="rounded-lg border p-6 text-center text-sm" style={{ color: 'var(--ink-4)' }}>ไม่มีออเดอร์ในวันนี้</div>
-          : <div className="flex flex-col gap-2">
-              {dayOrds.map((o, i) => <OrderCard key={(o.order_no || '') + '#' + i} o={o} lines={skuBy.get(o.order_no) || []} fin={finOf(finBy, o)} showSeller onPickCustomer={onPickCustomer} />)}
-            </div>}
-      </div>
-    </div>
-  );
+// popup วัน (คลิกแถวตารางโอน/COD หรือคลิกแท่งกราฟรายวัน)
+// PART 117: เนื้อในย้ายไป dayDetailSheet.jsx (ตัวกลางตัวเดียว ใช้ร่วมกับ popup "ออเดอร์ทั้งวัน" ของหน้าประสิทธิภาพเซล)
+// เดิมสองที่นี้เป็นคนละคอมโพเนนต์ ฟีเจอร์ไม่เท่ากัน (ที่นี่มีกรองโอน/COD+เรียง แต่ไม่มีตารางช่องทาง/เสียงลูกค้า)
+export function DashDayDetail({ dateISO, ords, skus, funnelRows, onPickCustomer, onChangeDate }) {
+  return <DayDetailSheet dateISO={dateISO} orders={ords} skus={skus} funnelRows={funnelRows} onPickCustomer={onPickCustomer} onChangeDate={onChangeDate} />;
 }

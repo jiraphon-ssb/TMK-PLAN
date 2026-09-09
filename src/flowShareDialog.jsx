@@ -20,6 +20,15 @@ import { guardEdit } from './flowsShared.js';
    - เปิดจากปุ่ม "แชร์" ในแถบหัวบอร์ด (ไม่ฝังในตั้งค่าแล้ว)
    - สวิตช์เปิด/ปิด + คัดลอกลิงก์ + QR + เปิดดูตัวอย่าง + รีเซ็ตลิงก์ · graceful
    ============================================================ */
+/** token สุ่มแบบเข้ารหัส 128 บิต → base36 (~25 ตัวอักษร) */
+function randomToken() {
+  const c = globalThis.crypto;
+  if (!c || typeof c.getRandomValues !== 'function') throw new Error('เบราว์เซอร์นี้สร้างลิงก์แชร์ที่ปลอดภัยไม่ได้ — กรุณาอัปเดตเบราว์เซอร์');
+  const b = c.getRandomValues(new Uint8Array(16));
+  let hex = ''; b.forEach(x => { hex += x.toString(16).padStart(2, '0'); });
+  return BigInt('0x' + hex).toString(36);
+}
+
 export function ShareFlowDialog({ flow, open, onOpenChange }) {
   const { reload, refresh } = useData() || {};
   const [enabled, setEnabled] = useState(!!flow?.shareEnabled);
@@ -33,7 +42,10 @@ export function ShareFlowDialog({ flow, open, onOpenChange }) {
     setBusy(true);
     try {
       let tok = token;
-      if (rotate || (on && !tok)) tok = 'shr_' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+      /* ⚠️ token นี้คือกุญแจของ endpoint ที่ **ไม่ต้องล็อกอิน** (tmk_public_flow_bundle · grant to anon)
+         เดิมใช้ Math.random() ซึ่งไม่ใช่ CSPRNG — V8 กู้ state จาก output ไม่กี่ตัวได้ = เดา token อื่นต่อได้
+         ตอนนี้ใช้ crypto.getRandomValues (128 บิต) · ถ้าเบราว์เซอร์ไม่มี ให้ล้มไปเลย ดีกว่าออก token อ่อน ๆ */
+      if (rotate || (on && !tok)) tok = 'shr_' + randomToken();
       const { error } = await supabase.from('tmk_flows').update({ share_token: tok, share_enabled: on }).eq('id', flow.id);
       if (error) { if (/share_token|share_enabled|column/i.test(error.message || '')) throw new Error('ยังไม่ได้รัน migration — รัน 20260720-flow-cover-share.sql ก่อน'); throw error; }
       setToken(tok); setEnabled(on);

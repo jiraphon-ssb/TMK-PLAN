@@ -52,3 +52,89 @@ describe('orderVisibleTo — admin เห็นทุกใบ · คนอื�
     expect(orderVisibleTo({ salesperson: '' }, null)).toBe(false); // '' ไม่อยู่ใน [] ว่าง
   });
 });
+
+/* ============================================================
+   PART 119 — หน้า "เป้า & คอมมิชชั่น" ต้องเป็นแอดมินเท่านั้น
+   ============================================================
+   เดิม need:'edit' → เซลล์ (editor) เปิดหน้าและแก้เป้า/เรตคอมของตัวเองได้
+   เทสนี้ล็อกกติกาไว้ที่ระดับ config ของหน้าตั้งค่า (อ่านไฟล์จริง กันมีคนแก้กลับ)
+   ============================================================ */
+import fs from 'node:fs';
+describe('สิทธิ์หน้าตั้งค่า', () => {
+  const src = fs.readFileSync(new URL('../../views-settings.jsx', import.meta.url), 'utf8');
+  it("แท็บ 'เป้า & คอมมิชชั่น' ต้อง need: 'admin'", () => {
+    const line = src.split('\n').find(l => l.includes("id: 'targets'"));
+    expect(line).toBeTruthy();
+    expect(line).toContain("need: 'admin'");
+  });
+  it('เนื้อแท็บต้องเรนเดอร์เมื่อเป็นแอดมินเท่านั้น', () => {
+    const line = src.split('\n').find(l => l.includes('TabsContent value="targets"'));
+    expect(line).toContain('_isAdmin && <TargetsView />');
+  });
+  it("แท็บ 'ผู้ใช้ & สิทธิ์' ยังเป็นแอดมินเหมือนเดิม (กันแก้พลาดข้างเคียง)", () => {
+    const line = src.split('\n').find(l => l.includes("id: 'roles'"));
+    expect(line).toContain("need: 'admin'");
+  });
+});
+
+/* ============================================================
+   ภาพรวมทีมในหน้าประสิทธิภาพเซล (2 ก.ย. 69)
+   ============================================================
+   user สั่ง: ทุก role เห็น "ภาพรวมทีม" ได้ (ยอดรวม/KPI/คนทัก/%ปิด/เสียงลูกค้า/กราฟ)
+             แต่ "ตารางรายคน" (มีคอลัมน์ เป้า/คอม ของทุกคน) = แอดมินเท่านั้น
+   ============================================================ */
+describe('canSeeTeamOverview / canSeeTeamBoard', () => {
+  const admin = { role: 'admin' }, editor = { role: 'editor' }, viewer = { role: 'viewer' };
+
+  it('ภาพรวมทีม: ทุก role เห็นได้ (รวม viewer)', async () => {
+    const { canSeeTeamOverview } = await import('../roleAccess.js');
+    expect(canSeeTeamOverview(admin)).toBe(true);
+    expect(canSeeTeamOverview(editor)).toBe(true);
+    expect(canSeeTeamOverview(viewer)).toBe(true);
+  });
+
+  it('ไม่ล็อกอิน = ไม่เห็นอะไร', async () => {
+    const { canSeeTeamOverview, canSeeTeamBoard } = await import('../roleAccess.js');
+    expect(canSeeTeamOverview(null)).toBe(false);
+    expect(canSeeTeamOverview({})).toBe(false);
+    expect(canSeeTeamBoard(null)).toBe(false);
+  });
+
+  it('ตารางรายคน (มีค่าคอมของทุกคน): แอดมินเท่านั้น', async () => {
+    const { canSeeTeamBoard } = await import('../roleAccess.js');
+    expect(canSeeTeamBoard(admin)).toBe(true);
+    expect(canSeeTeamBoard(editor)).toBe(false);
+    expect(canSeeTeamBoard(viewer)).toBe(false);
+  });
+
+  it('canSeeTeam (ของเดิม) ยังเป็นแอดมินเท่านั้น — ห้ามเปลี่ยน มีที่อื่นใช้อยู่', async () => {
+    const { canSeeTeam } = await import('../roleAccess.js');
+    expect(canSeeTeam(admin)).toBe(true);
+    expect(canSeeTeam(editor)).toBe(false);
+  });
+});
+
+/* ชื่อเซลล์ที่มีช่องว่างหัว/ท้ายเกิดขึ้นจริงในข้อมูลชุดนี้ (funnelClose.js บันทึกไว้)
+   ตัวรวมยอดทุกตัว trim → ตัวกรองสิทธิ์ต้อง trim ด้วย ไม่งั้นเซลล์เห็นคอมตัวเองเป็น ฿0 */
+describe('orderVisibleTo ต้อง trim ชื่อ', () => {
+  const editor = { role: 'editor', name: 'แอน', email: 'ann@tmk.co' };
+
+  it('⛔ ออเดอร์ที่ salesperson มีช่องว่างหัวท้าย ต้องยังเป็นของเจ้าตัว', () => {
+    expect(orderVisibleTo({ salesperson: ' แอน ' }, editor)).toBe(true);
+    expect(orderVisibleTo({ salesperson: 'แอน' }, editor)).toBe(true);
+  });
+
+  it('ชื่อที่ trim แล้วมีช่องว่างในตัวเอง ยังต้องแยกกัน', () => {
+    expect(orderVisibleTo({ salesperson: 'แอน บี' }, editor)).toBe(false);
+  });
+
+  it('ชื่อผู้ใช้เองมีช่องว่าง ก็ต้องจับคู่ได้', () => {
+    expect(orderVisibleTo({ salesperson: 'แอน' }, { role: 'editor', name: ' แอน ' })).toBe(true);
+  });
+
+  it('คนอื่น/ว่าง ยังเห็นไม่ได้', () => {
+    expect(orderVisibleTo({ salesperson: 'บี' }, editor)).toBe(false);
+    expect(orderVisibleTo({ salesperson: '' }, editor)).toBe(false);
+    expect(orderVisibleTo({ salesperson: '   ' }, editor)).toBe(false);
+  });
+});

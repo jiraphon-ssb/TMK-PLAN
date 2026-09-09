@@ -6,10 +6,8 @@
    - จุดแดง "ยังไม่อ่าน" sync ข้าม component ด้วย CustomEvent (useUnseenVersion)
    ============================================================ */
 import { useState, useEffect } from 'react';
-import { CHANGELOG, APP_VERSION } from './changelog.js';
+import { APP_VERSION } from './appVersion.js';   // ห้าม import changelog.js ที่นี่ — ไฟล์นี้อยู่ใน entry chunk
 import { Icon } from './components.jsx';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 
 /* ---------- แถบ "มีเวอร์ชันใหม่" (แบบ A — นุ่ม) ----------
    เช็ค version.json บนเซิร์ฟเวอร์ทุก ~3 นาที + ตอนกลับมาที่แท็บ
@@ -61,12 +59,6 @@ export function UpdateBanner() {
   );
 }
 
-const TYPE_META = {
-  feature:     { c: 'var(--good)',     l: 'ฟีเจอร์ใหม่' },
-  improvement: { c: 'var(--accent-2)', l: 'ปรับปรุง' },
-  fix:         { c: 'var(--info)',     l: 'อัปเดต & แก้บั๊ก' },
-  release:     { c: 'var(--warn)',     l: 'เปิดตัว' },
-};
 const SEEN_KEY = 'tmk-seen-version';
 const SEEN_EVT = 'tmk-version-seen';
 const getSeen = () => { try { return localStorage.getItem(SEEN_KEY); } catch { return null; } };
@@ -91,68 +83,4 @@ export function useUnseenVersion() {
 
 // หน้าเต็ม "มีอะไรใหม่" (section whatsnew · ทุกคนเข้าได้) — timeline release-notes + mark seen ตอนเปิด
 // PART 101: รื้อ UI ใหม่ — เส้น timeline + จุดไล่รุ่น · รุ่นล่าสุดขอบ accent · แถวฟีเจอร์เป็น icon chip · คอลัมน์อ่านกลางหน้า
-export function WhatsNewPage() {
-  useEffect(() => { markVersionSeen(); }, []);
-  if (!CHANGELOG.length) return null;
-  return (
-    <div className="content-inner mx-auto w-full max-w-[880px] pb-6">
-      {/* หัวหน้า — สเกลเดียวกับหัวหน้าอื่นทั้งแอป (text-base ไม่โด่ง) */}
-      <div className="flex items-center gap-2.5 mb-4">
-        <span className="grid size-8 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] flex-none"><Icon name="sparkle" className="size-4" /></span>
-        <div className="min-w-0">
-          <h1 className="m-0 text-base font-semibold leading-tight">มีอะไรใหม่</h1>
-          <div className="text-xs text-muted-foreground">ประวัติการอัปเดตของระบบ TMK</div>
-        </div>
-        <Badge variant="outline" className="ml-auto rounded-full font-medium text-[11px] shrink-0" style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>v{APP_VERSION} ล่าสุด</Badge>
-      </div>
-
-      {/* timeline */}
-      <div className="relative">
-        {/* เส้นแนวตั้ง */}
-        <span className="absolute left-[13px] top-2 bottom-2 w-px" style={{ background: 'var(--line)' }} aria-hidden="true" />
-        <div className="flex flex-col gap-4">
-          {CHANGELOG.map((u, i) => {
-            const m = TYPE_META[u.type] || TYPE_META.fix;
-            const items = u.items || [];
-            const isLatest = i === 0;
-            return (
-              <div key={u.ver + '-' + i} className="relative pl-9">
-                {/* จุด timeline */}
-                <span className="absolute left-[3px] top-1 grid size-[21px] place-items-center rounded-full border-2 bg-background z-[1]"
-                  style={{ borderColor: isLatest ? 'var(--accent)' : 'var(--line)' }}>
-                  <span className="size-2 rounded-full" style={{ background: isLatest ? 'var(--accent)' : 'var(--ink-4)' }} />
-                </span>
-                {/* การ์ดรุ่น */}
-                <Card className={'p-3.5 sm:p-4 transition-colors ' + (isLatest ? '' : 'bg-card/60')}
-                  style={isLatest ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent-soft)' } : undefined}>
-                  <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: items.length ? 10 : 0 }}>
-                    <span className="text-[13px] font-bold num">v{u.ver}</span>
-                    <Badge className="rounded-full font-medium border-transparent text-[10.5px] px-2 py-0" style={{ background: m.c, color: '#fff' }}>{m.l}</Badge>
-                    {isLatest && <Badge variant="secondary" className="rounded-full text-[10.5px] px-2 py-0">ใหม่</Badge>}
-                    <span className="text-[11px] text-muted-foreground ml-auto">{u.date}</span>
-                  </div>
-                  {items.length > 0 && (
-                    <div className="flex flex-col gap-2.5">
-                      {items.map((it, j) => {
-                        const obj = it && typeof it === 'object';
-                        const text = obj ? it.text : it;
-                        return (
-                          <div key={j} className="flex items-start gap-2.5">
-                            <span className="grid place-items-center rounded-md flex-none mt-px" style={{ width: 21, height: 21, background: `color-mix(in srgb, ${m.c} 13%, transparent)`, color: m.c }}>
-                              <Icon name={obj && it.icon ? it.icon : 'checkCheck'} className="size-3.5" />
-                            </span>
-                            <span className="text-[13px] leading-relaxed">{text}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Card>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ---- แยกหัวข้อ/รายละเอียดจากข้อความ changelog (รูปแบบที่ใช้จริง: "หัวข้อ: รายละเอียด · รายละเอียด") ---- */

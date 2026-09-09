@@ -15,13 +15,9 @@ import { SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 
 export const NAV_DEF = [
   { id: 'home', labelKey: 'navHome', icon: 'home' },
-  { id: 'sales', labelKey: 'navSales', icon: 'sales', subs: [
-    { id: 'overview', labelKey: 'subOverview', icon: 'sales' },
-    { id: 'channels', labelKey: 'subChannels', icon: 'layers' },
-    { id: 'ads', labelKey: 'subAds', icon: 'zap' },
-    { id: 'customers', labelKey: 'subCustomers', icon: 'users' },
-    { id: 'monthly', labelKey: 'subMonthly', icon: 'pencil' },
-  ]},
+  // PART 103: section 'sales' เดิม (ภาพรวม/ช่องทาง/โฆษณา/ลูกค้า) ยุบรวมเข้า 'catalog' ที่เปลี่ยนชื่อเป็น "ยอดขาย"
+  //   ภาพรวม+ช่องทาง → รายงานขาย แท็บภาพรวม · โฆษณา → แท็บโฆษณา · ลูกค้า → แท็บลูกค้า & CRM
+  //   เหลือ 'monthly' (บันทึก & ภาพรวมเดือน) ย้ายมาเป็นหน้าสุดท้ายของกลุ่มนี้
   // โครงการ (วางแผนงาน) — อยู่ใต้ยอดขาย
   { id: 'flows', labelKey: 'navFlows', icon: 'grid', subs: [
     { id: 'overview', labelKey: 'subFlowBoard', icon: 'grid' },
@@ -39,8 +35,10 @@ export const NAV_DEF = [
     { id: 'orders', labelKey: 'subOrders', icon: 'listChecks' },
     { id: 'crm', labelKey: 'subCrm', icon: 'users' },
     // PART 102: ลบหน้า "ส่งยอด & ข้อมูล" (sub 'data') — เซลล์ส่งยอดผ่านปุ่มลอยในหน้าประสิทธิภาพเซล
-    // · นำเข้ามาร์เก็ตเพลส = ลบทิ้ง · คุณภาพข้อมูล = ย้ายไปตั้งค่า
     { id: 'shirts', labelKey: 'subShirts', icon: 'bag' },
+    // PART 112: หน้าสต็อก (เฟส 1 = สต็อกตั้งต้น + นับสต็อก)
+    { id: 'stock', labelKey: 'subStock', icon: 'box' },
+    // 'monthly' (บันทึก & ภาพรวมเดือน) ลบถาวร 21 ส.ค. — กรอกค่าแอด = ปุ่มลอยในรายงานขาย · สรุป/YoY/ไตรมาส อยู่แท็บภาพรวม
   ]},
   // บันทึกกิจกรรม / Log — คุมสิทธิ์รายคนผ่าน locked_sections (LockPicker) เหมือนหน้าอื่น (default เข้าได้ · admin ล็อกรายคน)
   { id: 'logs', labelKey: 'navLogs', icon: 'clock' },
@@ -59,9 +57,9 @@ export const DEFAULT_SUB = { flows: 'overview', sales: 'overview', planner: 'cal
 export function sidebarFlows() {
   const me = userEmail();
   const r = (TMK.flows || []).find(f => f.id === '__general__');
-  const general = { id: '__general__', name: r?.name || 'งานทั่วไป', icon: r?.icon || '📋', defaultView: r?.defaultView || 'kanban', isGeneral: true };
+  const general = { id: '__general__', name: r?.name || 'งานทั่วไป', icon: r?.icon || 'ClipboardList', defaultView: r?.defaultView || 'kanban', isGeneral: true };
   const real = (TMK.flows || []).filter(f => f.id !== '__general__' && !f.archived && (f.visibility !== 'private' || f.owner === me))
-    .map(f => ({ id: f.id, name: f.name, icon: f.icon || '📋', defaultView: f.defaultView || 'kanban' }));
+    .map(f => ({ id: f.id, name: f.name, icon: f.icon || 'ClipboardList', defaultView: f.defaultView || 'kanban' }));
   return [general, ...real];
 }
 /* ---------- PART 100: กลุ่ม "โครงการ" แบบแถวแบน (แทน FlowsNav accordion เดิม) ----------

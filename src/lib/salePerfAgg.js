@@ -9,12 +9,28 @@ import { commissionFor } from './targets.js';
 import { isChatOrder } from './saleFields.js';
 
 export const NO_SELLER = 'ไม่ระบุเซลล์';
-export const curMonth = () => new Date().toISOString().slice(0, 7);
+// เดือนปัจจุบันตาม "เวลาเครื่อง" — ห้ามใช้ toISOString() (UTC)
+// ไทย UTC+7: ช่วง 00:00–07:00 ของวันที่ 1 UTC ยังเป็นเดือนก่อน แต่ getDate() เป็น 1 แล้ว
+// → buildPerf ได้ dim ของเดือนก่อน คู่กับ daysPassed=1 → คาดการณ์สิ้นเดือนพุ่งเป็น 31 เท่า
+export const curMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 export const daysInMonth = (ym) => { const [y, m] = ym.split('-').map(Number); return new Date(y, m, 0).getDate(); };
 export const dayOf = (iso) => Number(String(iso || '').slice(8, 10)) || 0;
 export const isCancelled = (o) => String(o.status || '').toLowerCase() === 'cancelled';
 export const spOf = (o) => (o.salesperson && String(o.salesperson).trim()) || NO_SELLER;
 export const deltaPct = (cur, prev) => (prev > 0 ? (cur - prev) / prev * 100 : null);
+
+/**
+ * ตัวเศษของ %ปิดรวม — ออเดอร์ช่องแชทเฉพาะของเซลล์ที่ "กรอกคนทัก" ในช่วงนั้น
+ * ถ้าไม่มีใครกรอกคนทักเลย → คืนผลรวมทั้งหมด (นิยามเดียวกับ channelTable · กันหารกับ 0 ไปเอง)
+ * @param rows   แถวจาก buildPerf (หรือ subset ที่กรองแล้วบนหน้าจอ)
+ * @param funnel แถวคนทักดิบของช่วงนั้น
+ */
+export function chatClosedOf(rows, funnel) {
+  // ข้ามแถวชื่อว่างให้ตรงกับ channelTable/funnelCloseStats (ดู closeRateParity.test.js)
+  const sellers = new Set((funnel || []).map(f => String(f.salesperson || '').trim()).filter(Boolean));
+  const sum = (list) => list.reduce((a, r) => a + (r.chatOrders || 0), 0);
+  return sellers.size ? sum((rows || []).filter(r => sellers.has(r.name))) : sum(rows || []);
+}
 
 // สร้าง leaderboard รายเซลล์ต่อเดือน — ยอด/ออเดอร์/ตัว/AOV/คนทัก/%ปิด/เป้า/คอม/pace + รายวัน + เทียบเดือนก่อน
 export function buildPerf(month, orders, skus, funnel, receipts, targets, prevOrders) {
@@ -108,7 +124,11 @@ export function buildPerf(month, orders, skus, funnel, receipts, targets, prevOr
     sales: a.sales + r.sales, orders: a.orders + r.orders, chatOrders: a.chatOrders + (r.chatOrders || 0), qty: a.qty + r.qty,
     leads: a.leads + r.leads, newC: a.newC + r.newC,
   }), { sales: 0, orders: 0, chatOrders: 0, qty: 0, leads: 0, newC: 0 });
-  team.closeRate = team.leads > 0 ? team.chatOrders / team.leads * 100 : null;
+  // ตัวเศษของ %ปิดรวม = ออเดอร์ช่องแชทของ "เซลล์ที่กรอกคนทักในช่วงนั้น" เท่านั้น
+  // (ตัวส่วนมีแค่คนที่กรอก — ถ้าตัวเศษนับคนที่ไม่กรอกด้วย = คนละกลุ่มกัน %ปิดพองเกินจริง)
+  // นิยามเดียวกับ channelTable ในรายงานขาย · มีเทส closeRateParity คุมไว้
+  team.chatClosed = chatClosedOf(rows, funnel);
+  team.closeRate = team.leads > 0 ? team.chatClosed / team.leads * 100 : null;
   const prevTeam = [...prevSp.values()].reduce((a, v) => a + v, 0);
   team.dSales = deltaPct(team.sales, prevTeam);
   return { rows, team, dim };

@@ -44,10 +44,11 @@ function groupAnoms(rows, keyf) {
   return Object.values(o).map(v => ({ ...v, channels: [...v.channels] })).sort((a, b) => b.count - a.count);
 }
 // สถิติแบบ inline บนแถบสรุปหน้า "คุณภาพข้อมูล" — แทน MetricCard 4 ใบ
-const HealthStat = ({ label, value, tone }) => (
+const HealthStat = ({ label, value, tone, sub }) => (
   <div style={{ minWidth: 84 }}>
     <div className="cap" style={{ color: 'var(--ink-4)' }}>{label}</div>
     <div className="num" style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.2, color: tone || 'var(--ink-1)' }}>{value}</div>
+    {sub && <div className="cap num" style={{ color: 'var(--ink-4)' }}>{sub}</div>}
   </div>
 );
 
@@ -139,9 +140,15 @@ export function HealthHub() { // แท็บ "คุณภาพข้อมู
       const patch = { design: c.design, product_code: c.product_code, match_how: c.match_how };
       if (c.color) patch.color = c.color;   // เติมสี/ไซซ์ให้แถวเก่าที่ว่าง (ใบเสร็จ) — ไม่ทับของที่มีอยู่
       if (c.size) patch.size = c.size;
+      /* จำกัดให้โดนเฉพาะแถวที่ "หน้าตาเหมือนตัวอย่าง" — patch คิดจากแถวเดียวแต่เดิมยิงโดนทั้งกลุ่ม
+         ทำให้แถวที่แก้สี/ไซซ์ด้วยมือถูกทับ (คอมเมนต์เดิมบอกว่า "ไม่ทับของที่มีอยู่" ซึ่งไม่จริง) */
       const runUpdate = (p) => {
         let q = supabase.from('tmk_mp_skus').update(p).eq('source', c.source).eq('raw_sku_or_name', c.raw);
-        return (c.oldCode ? q.eq('product_code', c.oldCode) : q.or('product_code.is.null,product_code.eq.'));
+        q = (c.oldCode ? q.eq('product_code', c.oldCode) : q.or('product_code.is.null,product_code.eq.'));
+        if (c.curDesign !== undefined) q = c.curDesign ? q.eq('design', c.curDesign) : q.or('design.is.null,design.eq.');
+        if (c.curColor !== undefined) q = c.curColor ? q.eq('color', c.curColor) : q.or('color.is.null,color.eq.');
+        if (c.curSize !== undefined) q = c.curSize ? q.eq('size', c.curSize) : q.or('size.is.null,size.eq.');
+        return q;
       };
       let { error } = await runUpdate(patch);
       // graceful: ถ้าคอลัมน์ color/size มีปัญหา → เขียนลาย/รหัสอย่างเดียวให้ persist แน่ (ไม่ให้ทั้งก้อนพัง)
@@ -175,22 +182,24 @@ export function HealthHub() { // แท็บ "คุณภาพข้อมู
   }, [A]);
 
   if (skus === null && !err) return <PageSkeleton />;
-  if (err) return <div className="content-inner"><Card className="p-5" style={{ color: 'var(--bad)' }}>โหลดข้อมูลไม่ได้: {err}</Card></div>;
+  if (err) return <div className="w-full max-w-5xl"><Card className="p-5" style={{ color: 'var(--bad)' }}>โหลดข้อมูลไม่ได้: {err}</Card></div>;
 
-  const matchPct = A.total ? Math.round(A.matched / A.total * 100) : 0;
+  const matchRatio = A.total ? A.matched / A.total : 0;
+  const matchPct = !A.total ? 0 : (A.matched === A.total ? 100 : Math.min(99, Math.floor(matchRatio * 100)));
   const shownIssues = issueQ.trim()
     ? issues.filter(d => `${d.label} ${d.key} ${d.sample || ''} ${(d.channels || []).join(' ')}`.toLowerCase().includes(issueQ.trim().toLowerCase()))
     : issues;
 
   return (
-    <div className="content-inner" style={{ display: 'grid', gap: 14 }}>
+    <div className="w-full max-w-5xl" style={{ display: 'grid', gap: 14 }}>
       {noTable && <Card className="p-3" style={{ color: 'var(--warn)', borderLeft: '3px solid var(--warn)' }}><Icon name="alertTriangle" /> ยังไม่ได้สร้างตาราง <code>tmk_mp_aliases</code> — รันไฟล์ <code>supabase/migrations/20260623-mp-aliases.sql</code> ใน Supabase ก่อน จึงจะตั้ง alias ได้ (ส่วนอื่นยังดูได้ปกติ)</Card>}
 
       {/* แถบสรุป + จับคู่ใหม่ — บรรทัดเดียวจบ */}
       <Card className="p-4">
         <div className="row" style={{ gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
           <HealthStat label="SKU ทั้งหมด" value={N(A.total)} />
-          <HealthStat label="จับคู่ลายได้" value={A.total ? `${matchPct}%` : '—'} tone={!A.total ? undefined : matchPct >= 98 ? 'var(--good)' : 'var(--warn)'} />
+          <HealthStat label="จับคู่ลายได้" value={A.total ? `${matchPct}%` : '—'} sub={A.total ? `${N(A.matched)}/${N(A.total)}` : null}
+            tone={!A.total ? undefined : matchPct >= 98 ? 'var(--good)' : 'var(--warn)'} />
           <HealthStat label="มีรหัสลาย" value={N(A.withCode)} />
           <HealthStat label="ต้องตรวจ" value={N(issues.length)} tone={issues.length ? 'var(--warn)' : 'var(--good)'} />
           <div style={{ flex: 1 }} />

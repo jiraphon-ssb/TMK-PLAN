@@ -35,7 +35,19 @@ grant select, insert, update, delete on public.tmk_crm_notes to anon, authentica
 -- RLS + policy (เหมือนทุกตาราง tmk_ · role authenticated เขียน/อ่านได้)
 alter table public.tmk_crm_targets enable row level security;
 alter table public.tmk_crm_notes  enable row level security;
-drop policy if exists tmk_authenticated_all on public.tmk_crm_targets;
-drop policy if exists tmk_authenticated_all on public.tmk_crm_notes;
-create policy tmk_authenticated_all on public.tmk_crm_targets as permissive for all to authenticated using (true) with check (true);
-create policy tmk_authenticated_all on public.tmk_crm_notes  as permissive for all to authenticated using (true) with check (true);
+-- ⚠️ สร้าง policy เปิดกว้าง **เฉพาะตอนที่ตารางยังไม่มี policy ของ Tier 3**
+--    เดิม drop แล้ว create ทื่อ ๆ → รันไฟล์นี้ซ้ำหลังรัน Tier 3 = คืนสิทธิ์เขียนให้ viewer
+--    (permissive policy ถูก OR กัน → <table>_rls_write ที่ผูก tmk_can_write() ถูกข้าม)
+do $$
+declare t text;
+begin
+  foreach t in array array['tmk_crm_targets', 'tmk_crm_notes'] loop
+    if exists (select 1 from pg_policies where schemaname = 'public' and tablename = t
+               and policyname like '%\_rls\_%' escape '\') then
+      raise notice 'ข้าม % — มี policy Tier 3 อยู่แล้ว (ไม่ทับ)', t;
+    else
+      execute format('drop policy if exists tmk_authenticated_all on public.%I', t);
+      execute format('create policy tmk_authenticated_all on public.%I as permissive for all to authenticated using (true) with check (true)', t);
+    end if;
+  end loop;
+end $$;

@@ -5,10 +5,11 @@
    ============================================================ */
 import React from 'react';
 import { TMK } from './data.js';
-import { Icon, Skel } from './components.jsx';
+import { Icon, Skel, PersonAvatar } from './components.jsx';
 import { Modal } from './modals-core.jsx';
 import { CUSTOMER_TYPES } from './lib/saleFields.js';
 import { csvEsc } from './lib/csv.js';
+import { lazyRetry } from './lib/lazyRetry.js';
 import { canEdit, isAdmin, toast } from './lib/appBus.js';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -108,7 +109,7 @@ export function MoneyCard({ total, codBadge, extras = [], discount, className = 
    file_url เป็น public URL (Storage) โหลดตอนเปิดเท่านั้น = egress น้อย
    ใช้ pdf.js render ลง canvas (ไม่พึ่งปลั๊กอิน PDF ของเบราว์เซอร์ที่บางตัวไม่มี → iframe ดำ)
    PdfViewer lazy-load → pdfjs โหลดเฉพาะตอนเปิด ไม่บวม bundle หลัก */
-const PdfViewer = React.lazy(() => import('./components/PdfViewer.jsx'));
+const PdfViewer = lazyRetry(() => import('./components/PdfViewer.jsx'), 'PdfViewer');
 export function ReceiptPdfModal({ url, title = 'ไฟล์ใบเสร็จ', onClose }) {
   return (
     <Modal xl icon="external" title={title} sub="ดูไฟล์ใบเสร็จ (PDF)" onClose={onClose}
@@ -123,10 +124,42 @@ export function ReceiptPdfModal({ url, title = 'ไฟล์ใบเสร็�
 }
 
 /* ---- CustomerTypeChips — ลูกค้าใหม่/เก่า แบบ chips อันเดียวทุกฟอร์ม (เลิก Select บ้าง chips บ้าง) ---- */
-export function CustomerTypeChips({ value, onChange }) {
+/* ---- FilterChip / PersonChips — ชิปตัวกรองแบบเดียวกันทั้งแอป (PART 114) ----
+   เดิม copy สไตล์ inline ซ้ำ 2 ที่ (popup รายวัน · ใบสั่งผลิต) → รวมมาไว้ที่เดียว
+   ปุ่มจริง (button) มี aria-pressed → คีย์บอร์ด/สกรีนรีดเดอร์รู้ว่าเลือกอยู่ · สูง 26px ตามชิปเดิม */
+export function FilterChip({ on = false, onClick, title, children, className = '' }) {
+  return (
+    <button type="button" onClick={onClick} title={title} aria-pressed={on}
+      className={'row cap ' + className}
+      style={{ gap: 5, alignItems: 'center', padding: '3px 10px', borderRadius: 999, cursor: 'pointer', fontWeight: 600,
+        border: `1px solid ${on ? 'var(--accent)' : 'var(--line)'}`,
+        background: on ? 'var(--accent-soft)' : 'var(--surface)',
+        color: on ? 'var(--accent-2)' : 'var(--ink-3)' }}>
+      {children}
+    </button>
+  );
+}
+
+/* ชิปเลือกคน (พร้อมอวาตาร์) + ปุ่ม "ทั้งหมด" — ใช้ทั้งใบสั่งผลิตและตัวกรองรายคนอื่น ๆ */
+export function PersonChips({ people = [], value = '', onChange, label = 'ผู้รับผิดชอบ', allLabel = 'ทั้งหมด' }) {
+  if (!people.length) return null;
+  return (
+    <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      {label && <span className="cap" style={{ color: 'var(--ink-4)' }}>{label}</span>}
+      <FilterChip on={!value} onClick={() => onChange('')}>{allLabel}</FilterChip>
+      {people.map(p => (
+        <FilterChip key={p} on={value === p} onClick={() => onChange(value === p ? '' : p)}>
+          <PersonAvatar name={p} size={16} />{p}
+        </FilterChip>
+      ))}
+    </div>
+  );
+}
+
+export function CustomerTypeChips({ value, onChange, showLabel = true }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-[11px] text-muted-foreground">สถานะ</span>
+      {showLabel && <span className="text-[11px] text-muted-foreground">สถานะ</span>}
       {CUSTOMER_TYPES.map(t => (
         <button key={t} type="button" onClick={() => onChange(t)}
           className={`h-7 px-2.5 rounded-md border text-xs transition-colors ${value === t ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground'}`}>{t}</button>
@@ -203,46 +236,83 @@ export const fmtRange = (from, to) => {
   if (fy === ty) return `${fd} ${_TH_MON[fm - 1]} – ${td} ${_TH_MON[tm - 1]} ${ty}`;
   return `${_fmtTh(from)} – ${_fmtTh(to)}`;
 };
-export function DateRangePicker({ from, to, min, max, onChange, presets = [], activePreset, onPickPreset }) {
+/* จอแคบ → ปฏิทินเดือนเดียว (2 เดือนล้นจอมือถือ) · เคารพการหมุนจอ */
+function useNarrow(bp = 640) {
+  const [narrow, setNarrow] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < bp);
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia(`(max-width: ${bp - 1}px)`);
+    const on = () => setNarrow(mq.matches);
+    on(); mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [bp]);
+  return narrow;
+}
+
+/* presetRangeOf(id) → {from,to} (ไม่บังคับ): ถ้าส่งมา จะโชว์ช่วงวันจริงใต้ชื่อ preset
+   → ผู้ใช้เห็นเลยว่า "เดือนนี้" = 1–24 ส.ค. โดยไม่ต้องกดดูปฏิทินก่อน */
+export function DateRangePicker({ from, to, min, max, onChange, presets = [], activePreset, onPickPreset, presetRangeOf }) {
   const [open, setOpen] = React.useState(false);
   const [sel, setSel] = React.useState({ from: _isoToDate(from), to: _isoToDate(to) });
+  const narrow = useNarrow();
   // min/max = ขอบวันที่ข้อมูลจริง (ใช้โดยหน้าออเดอร์ — เดิม OrderDatePicker fork แยก · PART 81 รวมเป็นตัวเดียว)
   const disabled = []; if (_isoToDate(min)) disabled.push({ before: _isoToDate(min) }); if (_isoToDate(max)) disabled.push({ after: _isoToDate(max) });
   const presetLabel = (presets.find(([id]) => id === activePreset) || [])[1];
   const main = presetLabel || (from || to ? 'กำหนดเอง' : 'ทุกช่วงเวลา');
   const sub = activePreset === 'all' ? '' : fmtRange(from, to);
+  // ใช้ช่วงที่เลือกค้างไว้ (รองรับ "วันเดียว": กดวันเดียวแล้วกดใช้ได้เลย — เดิมต้องกด 2 ครั้งให้ครบ from/to)
+  const applySel = () => {
+    if (!sel?.from) return;
+    onChange(_dateToIso(sel.from), _dateToIso(sel.to || sel.from));
+    setOpen(false);
+  };
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setSel({ from: _isoToDate(from), to: _isoToDate(to) }); }}>
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className="h-8 gap-2 font-normal">
           <Icon name="calendarDays" /><span className="font-semibold text-[var(--ink)]">{main}</span>
           {sub && <span className="text-[var(--ink-4)]">· {sub}</span>}
-          <Icon name="down" />
+          <Icon name="chevD" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
         <div className="flex max-sm:flex-col">
-          <div className="flex shrink-0 flex-col gap-0.5 border-b p-2 sm:min-w-[128px] sm:border-b-0 sm:border-r">
-            <span className="px-2 pb-1 text-[11px] font-semibold text-[var(--ink-4)]">ช่วงเวลา</span>
-            {presets.map(([id, lb]) => (
-              <button key={id} onClick={() => { onPickPreset(id); setOpen(false); }}
-                className={'rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors ' + (id === activePreset ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent-2)]' : 'text-[var(--ink-2)] hover:bg-[var(--surface-2)]')}>{lb}</button>
-            ))}
+          {/* คอลัมน์ preset — ชื่อ + ช่วงวันจริง (ถ้ามี presetRangeOf) · ที่เลือกอยู่มีเครื่องหมายถูก ไม่พึ่งสีอย่างเดียว */}
+          <div className="flex shrink-0 flex-col gap-0.5 border-b p-2 sm:min-w-[168px] sm:border-b-0 sm:border-r">
+            <span className="px-2 pb-1.5 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ink-4)]">ช่วงเวลา</span>
+            {presets.map(([id, lb]) => {
+              const on = id === activePreset;
+              const r = presetRangeOf && id !== 'all' ? presetRangeOf(id) : null;
+              const hint = r ? fmtRange(r.from, r.to) : '';
+              return (
+                <button key={id} type="button" aria-pressed={on} onClick={() => { onPickPreset(id); setOpen(false); }}
+                  className={'flex min-h-[36px] items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors ' + (on ? 'bg-[var(--accent-soft)] text-[var(--accent-2)]' : 'text-[var(--ink-2)] hover:bg-[var(--surface-2)]')}>
+                  <span className="flex w-3.5 shrink-0 justify-center">{on && <Icon name="check" className="size-3.5" />}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className={'block truncate text-[13px] ' + (on ? 'font-semibold' : '')}>{lb}</span>
+                    {hint && <span className="block truncate text-[11px] leading-tight text-[var(--ink-4)]">{hint}</span>}
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <div className="flex min-w-0 flex-col">
-            <Calendar mode="range" numberOfMonths={2} locale={th} defaultMonth={_isoToDate(from) || _isoToDate(max)} selected={sel}
+            <Calendar mode="range" numberOfMonths={narrow ? 1 : 2} locale={th} defaultMonth={_isoToDate(from) || _isoToDate(max)} selected={sel}
               disabled={disabled.length ? disabled : undefined}
               onSelect={(r) => { setSel(r || { from: undefined, to: undefined }); if (r?.from && r?.to) { onChange(_dateToIso(r.from), _dateToIso(r.to)); setOpen(false); } }} />
-            {/* แถบสรุประหว่างเลือก: วันเริ่ม → วันสิ้นสุด + ล้าง */}
-            <div className="flex items-center justify-between gap-3 border-t px-3 py-2 text-[12.5px]">
-              <span>
+            {/* แถบสรุประหว่างเลือก: วันเริ่ม → วันสิ้นสุด + ล้าง + ใช้ช่วงนี้ */}
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-3 py-2 text-[12.5px]">
+              <span className="min-w-0">
                 <span className={sel?.from ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-4)]'}>{sel?.from ? _fmtTh(_dateToIso(sel.from)) : 'เลือกวันเริ่ม'}</span>
                 <span className="mx-1.5 text-[var(--ink-4)]">→</span>
-                <span className={sel?.to ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-4)]'}>{sel?.to ? _fmtTh(_dateToIso(sel.to)) : 'เลือกวันสิ้นสุด'}</span>
+                <span className={sel?.to ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-4)]'}>{sel?.to ? _fmtTh(_dateToIso(sel.to)) : (sel?.from ? 'วันเดียว' : 'เลือกวันสิ้นสุด')}</span>
               </span>
-              {(sel?.from || sel?.to) && (
-                <button className="text-[12px] font-medium text-[var(--bad)] hover:underline" onClick={() => setSel({ from: undefined, to: undefined })}>ล้าง</button>
-              )}
+              <span className="ml-auto flex items-center gap-1.5">
+                {(sel?.from || sel?.to) && (
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px] text-[var(--bad)]" onClick={() => setSel({ from: undefined, to: undefined })}>ล้าง</Button>
+                )}
+                <Button size="sm" className="h-7 px-3 text-[12px]" disabled={!sel?.from} onClick={applySel}>ใช้ช่วงนี้</Button>
+              </span>
             </div>
           </div>
         </div>
@@ -365,5 +435,31 @@ export function VoiceFeed({ funnel, title = 'เสียงลูกค้า',
         ))}
       </div>
     </div>
+  );
+}
+
+
+/* ---------- QuickFab — ปุ่มลอย CTA pill (PART 96.1 · ย้ายจาก salePerf มาเป็นของกลาง PART 103) ----------
+   ใช้ใน: ประสิทธิภาพเซล (คนทัก/ส่งยอด) + รายงานขาย (กรอกค่าแอด) · dot = จุดแดงเตือน (เช่น วันนี้ยังไม่กรอก) */
+export function QuickFab({ icon, label, onClick, tone, dot = false, dotTitle = 'มีงานค้าง' }) {
+  const TONES = {
+    submit: ['linear-gradient(135deg,#10b981,#0ea5e9)', 'rgba(14,165,233,.5)'],   // ส่งยอด: emerald → sky
+    ads:    ['linear-gradient(135deg,#f59e0b,#f97316)', 'rgba(249,115,22,.5)'],   // ค่าแอด: amber → orange
+    leads:  ['linear-gradient(135deg,#6366f1,#a855f7)', 'rgba(124,58,237,.5)'],   // คนทัก: indigo → violet (default)
+  };
+  const [grad, glow] = TONES[tone] || TONES.leads;
+  return (
+    // wrapper แยกชั้น: จุดแดงอยู่นอกปุ่ม (ปุ่มมี overflow-hidden เพื่อ sheen — เคยวางจุดข้างในแล้วโดน clip หาย)
+    <span className="relative inline-flex" title={dot ? dotTitle : undefined}>
+    <button type="button" onClick={onClick} aria-label={dot ? `${label} — ${dotTitle}` : label}
+      className="group relative inline-flex min-w-[152px] items-center gap-2.5 overflow-hidden whitespace-nowrap rounded-full py-3 pl-3.5 pr-5 text-[15px] font-semibold text-white ring-1 ring-white/25 transition-all duration-200 hover:-translate-y-0.5 hover:brightness-[1.06] active:translate-y-0 active:scale-[0.97]"
+      style={{ background: grad, boxShadow: `0 14px 34px -10px ${glow}, 0 4px 10px -4px rgba(0,0,0,.32)` }}>
+      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/30 to-transparent" />
+      <span aria-hidden className="pointer-events-none absolute -inset-y-2 -left-1/3 w-1/3 skew-x-[-20deg] bg-white/20 blur-md transition-transform duration-500 group-hover:translate-x-[360%]" />
+      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-white/25 ring-1 ring-white/30 transition-transform duration-200 group-hover:scale-110 group-active:scale-95 [&_svg]:size-4"><Icon name={icon} /></span>
+      <span className="relative">{label}</span>
+    </button>
+    {dot && <span className="absolute -top-0.5 -right-0.5 z-10 size-3 rounded-full ring-2 ring-white" style={{ background: 'var(--bad, #ef4444)' }} aria-hidden />}
+    </span>
   );
 }

@@ -89,6 +89,8 @@ export function payShipnity(bank) {
   if (b === '' || b === '-' || b === 'ไม่ระบุ') return 'ไม่ระบุ';
   return 'โอน';   // ชื่อธนาคาร/'โอน' → โอน (idempotent กับค่า canonical ทุกตัว)
 }
+/** @deprecated คืน 'จ่ายล่วงหน้า' ซึ่งอยู่นอก PAYMENT_TYPES → ยอดไม่เข้าทั้งช่องโอนและ COD
+ *  ใช้ mpPaymentType() แทนสำหรับทุกแถวที่จะเขียนลง tmk_mp_orders */
 export function payTiktok(method) {
   return String(method).includes('ปลายทาง') ? 'COD' : 'จ่ายล่วงหน้า';
 }
@@ -352,6 +354,38 @@ export function resolveMpVariant({ name, variation }, M, opt = {}) {
 }
 
 /* ============================ STEP 1: MASTER (order-level) ============================ */
+/**
+ * ตัดแถวที่ "เหมือนกันทุกช่อง" ออก — แถวเดียวกันเป๊ะโผล่ซ้ำ = อัปไฟล์เดิมซ้ำ หรือ export คาบช่วงกัน
+ * ⚠️ จำเป็นเพราะ buildMaster บวกสะสมต่อ order_no (`g.sales += ...`) → แถวซ้ำ = ยอดคูณ แล้ว upsert ทับถาวร
+ *    และ dedup ที่หน้าจอ import ทำงานหลัง buildMaster จึงจับไม่ทัน
+ * ไม่ตัดแถวที่ต่างกันแม้แต่ช่องเดียว (ออเดอร์เดียวกันหลาย SKU = ของจริง ต้องบวกกัน)
+ * @returns { grid, dropped }
+ */
+export function dedupeGridRows(grid) {
+  const g = grid || [];
+  if (g.length < 3) return { grid: g, dropped: 0 };
+  const head = g[0];
+  const seen = new Set();
+  const out = [head];
+  let dropped = 0;
+  for (let r = 1; r < g.length; r++) {
+    const key = JSON.stringify((g[r] || []).map(v => String(v ?? '').trim()));
+    if (seen.has(key)) { dropped++; continue; }
+    seen.add(key); out.push(g[r]);
+  }
+  return { grid: out, dropped };
+}
+
+/** ช่องทางจ่ายเงินของมาร์เก็ตเพลส → ชุดมาตรฐาน PAYMENT_TYPES (saleFields.js)
+ *  ค่าดิบจากไฟล์ (เช่น 'บัตรเครดิต/เดบิต', 'จ่ายล่วงหน้า') หลุดนอกชุด → ยอดไม่เข้าทั้งช่องโอนและ COD
+ *  และโผล่เป็นตัวเลือกขยะในตัวกรองหน้าออเดอร์ */
+export function mpPaymentType(raw) {
+  const t = String(raw ?? '').trim();
+  if (!t) return 'ไม่ระบุ';
+  if (/cod|ปลายทาง/i.test(t)) return 'COD';
+  return 'มาร์เก็ตเพลส';   // จ่ายผ่านแพลตฟอร์ม (บัตร/วอลเล็ต/จ่ายล่วงหน้า) = เงินมาทางมาร์เก็ตเพลส
+}
+
 export function buildMaster({ shipnity, tiktok, shopee } = {}) {
   const rows = [];
   if (shipnity && shipnity.length > 1) {
@@ -395,24 +429,28 @@ export function buildMaster({ shipnity, tiktok, shopee } = {}) {
       });
     }
   }
-  if (tiktok && tiktok.length > 2) {
+  // > 1 ไม่ใช่ > 2: หน้าจอ import ตัดแถวคำอธิบายทิ้งไปแล้ว และลูปยังกรองด้วย regex order id อีกชั้น
+  // เดิม > 2 ทำให้ไฟล์ที่มีออเดอร์เดียวถูกตัดทิ้งทั้งไฟล์เงียบ ๆ
+  if (tiktok && tiktok.length > 1) {
     const { get } = indexer(tiktok);
     const c = { oid: get('Order ID'), created: get('Created Time'), status: get('Order Status'), pay: get('Payment Method'), qty: get('Quantity'), sub: get('SKU Subtotal After Discount'), prov: get('Province') };
     const byOrder = new Map(); // group SKU lines → 1 order
-    for (let r = 1; r < tiktok.length; r++) {
-      const row = tiktok[r] || [];
+    const tt = dedupeGridRows(tiktok).grid;   // แถวซ้ำเป๊ะ = อัปไฟล์ซ้ำ (ดู dedupeGridRows)
+    for (let r = 1; r < tt.length; r++) {
+      const row = tt[r] || [];
       const oid = String(row[c.oid] ?? '').trim();
       if (!oid) continue;
-      const cancelled = String(row[c.status] ?? '').trim() === 'ยกเลิกแล้ว';
-      if (!byOrder.has(oid)) byOrder.set(oid, { qty: 0, sales: 0, created: row[c.created], pay: row[c.pay], prov: row[c.prov], cancelled });
+      // อ่านคอลัมน์สถานะไม่ได้ → 'unknown' ไม่ใช่ 'active' (กันใบยกเลิกถูกนับยอดเข้าเต็ม)
+      const st = c.status >= 0 ? (String(row[c.status] ?? '').trim() === 'ยกเลิกแล้ว' ? 'cancelled' : 'active') : 'unknown';
+      if (!byOrder.has(oid)) byOrder.set(oid, { qty: 0, sales: 0, created: row[c.created], pay: row[c.pay], prov: row[c.prov], st });
       const g = byOrder.get(oid); g.qty += mpNum(row[c.qty]); g.sales += mpNum(row[c.sub]);
     }
     for (const [oid, g] of byOrder) {
       const om = ymOf(g.created);
       rows.push({
-        order_no: oid, source: 'tiktok', status: g.cancelled ? 'cancelled' : 'active', channel: 'TikTok', job_type: deriveJobType('TikTok', g.qty), marketplace_id: oid,
+        order_no: oid, source: 'tiktok', status: g.st, channel: 'TikTok', job_type: deriveJobType('TikTok', g.qty), marketplace_id: oid,
         order_month: om, order_date: isoDate(g.created), salesperson: '(TikTok)', province: String(g.prov ?? '').trim(),
-        payment_type: payTiktok(g.pay), customer_type: 'ไม่ทราบ (TikTok)',
+        payment_type: mpPaymentType(g.pay), customer_type: 'ไม่ทราบ (TikTok)',   // ต้องอยู่ใน PAYMENT_TYPES (เดิม 'จ่ายล่วงหน้า' หลุดนอกชุด)
         customer_code: '', customer_name: '', customer_social: '', cust_total_orders: 0, cust_total_spent: 0,
         qty_band: qtyBand(g.qty), qty: g.qty, sales: g.sales, cost: 0,
         mkt_commission: 0, mkt_net_income: 0, profit: 0, cod_amount: 0,
@@ -431,20 +469,25 @@ export function buildMaster({ shipnity, tiktok, shopee } = {}) {
       pay: get('ช่องทางการชำระเงิน', 'วิธีการชำระเงิน', 'Payment Method'),
     };
     const byOrder = new Map();
-    for (let r = 1; r < shopee.length; r++) {
-      const row = shopee[r] || [];
+    // ตัดแถวซ้ำก่อนบวกสะสม — ไม่งั้นอัปไฟล์เดิมซ้ำ = ยอดคูณสอง (ดู dedupeGridRows)
+    const sp = dedupeGridRows(shopee).grid;
+    for (let r = 1; r < sp.length; r++) {
+      const row = sp[r] || [];
       const ono = String(row[c.order] ?? '').trim();
       if (!ono) continue;
-      const cancelled = String(row[c.status] ?? '').includes('ยกเลิก');
-      if (!byOrder.has(ono)) byOrder.set(ono, { qty: 0, sales: 0, created: c.created >= 0 ? row[c.created] : '', prov: c.prov >= 0 ? row[c.prov] : '', recv: c.recv >= 0 ? row[c.recv] : '', pay: c.pay >= 0 ? String(row[c.pay] ?? '') : '', cancelled });
+      /* อ่านคอลัมน์สถานะไม่ได้ (คอลัมน์เปลี่ยนชื่อ) → ห้ามตีความว่า "ไม่ยกเลิก"
+         ไม่งั้นใบที่ยกเลิกถูกนับยอดเข้าเต็ม ๆ · 'unknown' ให้ผู้ใช้เห็นว่ามีอะไรผิด */
+      const st = c.status >= 0 ? (String(row[c.status] ?? '').includes('ยกเลิก') ? 'cancelled' : 'active') : 'unknown';
+      if (!byOrder.has(ono)) byOrder.set(ono, { qty: 0, sales: 0, created: c.created >= 0 ? row[c.created] : '', prov: c.prov >= 0 ? row[c.prov] : '', recv: c.recv >= 0 ? row[c.recv] : '', pay: c.pay >= 0 ? String(row[c.pay] ?? '') : '', st });
       const g = byOrder.get(ono); g.qty += mpNum(row[c.qty]); g.sales += mpNum(row[c.price]);
     }
     for (const [ono, g] of byOrder) {
-      const isCod = /cod|ปลายทาง/i.test(g.pay || '');
+      const pay = mpPaymentType(g.pay);
+      const isCod = pay === 'COD';
       rows.push({
-        order_no: ono, source: 'shopee', status: g.cancelled ? 'cancelled' : 'active', channel: 'Shopee', job_type: deriveJobType('Shopee', g.qty), marketplace_id: ono,
+        order_no: ono, source: 'shopee', status: g.st, channel: 'Shopee', job_type: deriveJobType('Shopee', g.qty), marketplace_id: ono,
         order_month: ymOf(g.created), order_date: isoDate(g.created), salesperson: '(Shopee)', province: String(g.prov ?? '').trim(),
-        payment_type: isCod ? 'COD' : String(g.pay || '').trim(), customer_type: 'ไม่ทราบ (Shopee)',
+        payment_type: pay, customer_type: 'ไม่ทราบ (Shopee)',
         customer_code: '', customer_name: String(g.recv ?? '').trim(), customer_social: '', cust_total_orders: 0, cust_total_spent: 0,
         qty_band: qtyBand(g.qty), qty: g.qty, sales: g.sales, cost: 0,
         mkt_commission: 0, mkt_net_income: 0, profit: 0, cod_amount: isCod ? g.sales : 0,
@@ -517,7 +560,9 @@ export function buildSku({ shipnity, shopee, tiktok } = {}, catalogGrid, opts = 
   }
 
   // ---- TikTok : Variation อาจเป็น สี หรือ ลาย → resolveMpVariant จัดให้ ----
-  if (tiktok && tiktok.length > 2) {
+  // > 1 ไม่ใช่ > 2: หน้าจอ import ตัดแถวคำอธิบายทิ้งไปแล้ว และลูปยังกรองด้วย regex order id อีกชั้น
+  // เดิม > 2 ทำให้ไฟล์ที่มีออเดอร์เดียวถูกตัดทิ้งทั้งไฟล์เงียบ ๆ
+  if (tiktok && tiktok.length > 1) {
     const { get } = indexer(tiktok);
     const c = { status: get('Order Status'), oid: get('Order ID'), seller: get('Seller SKU'), skuid: get('SKU ID'), pname: get('Product Name'), variation: get('Variation'), qty: get('Quantity'), sub: get('SKU Subtotal After Discount') };
     const known = knownIdxSet(c);
@@ -621,8 +666,19 @@ export function rematchSkuRow(row, M) {
 export function planRematch(rows, M) {
   const groups = new Map();
   for (const r of (rows || [])) {
-    const k = `${r.source || ''}|||${r.raw_sku_or_name || ''}|||${r.product_code || ''}`;
-    const g = groups.get(k) || { source: r.source || '', raw: r.raw_sku_or_name || '', oldCode: r.product_code || '', sample: r, rows: 0 };
+    /* ⚠️ คีย์กลุ่มต้องรวม design/color/size ด้วย
+       เดิมจัดกลุ่มด้วย (source, raw, product_code) แล้วคำนวณ patch จาก "แถวตัวอย่างแถวเดียว"
+       แต่ผลลัพธ์ขึ้นกับ design/color/size ของแถวนั้น (ซึ่งไม่อยู่ในคีย์) แล้ว UPDATE ยิงโดน
+       ทุกแถวในกลุ่ม → แถวที่เคย "แก้สี/ไซซ์ด้วยมือ" ถูกทับด้วยค่าของแถวตัวอย่าง
+       (เช่น 'กรมท่า/S' ที่แก้ไว้ กลายเป็น 'ดำ/XS' ตามแถวที่ยังว่าง)
+       แยกกลุ่มตามสภาพจริงของแถว = แต่ละกลุ่มได้ patch ที่คิดจากแถวที่หน้าตาเหมือนกันจริง */
+    const k = [r.source || '', r.raw_sku_or_name || '', r.product_code || '',
+               r.design || '', r.color || '', r.size || ''].join('|||');
+    const g = groups.get(k) || {
+      source: r.source || '', raw: r.raw_sku_or_name || '', oldCode: r.product_code || '',
+      curDesign: r.design || '', curColor: r.color || '', curSize: r.size || '',
+      sample: r, rows: 0,
+    };
     g.rows++; groups.set(k, g);
   }
   const changes = [];
@@ -630,7 +686,8 @@ export function planRematch(rows, M) {
   for (const g of groups.values()) {
     const res = rematchSkuRow(g.sample, M);
     if (!res) continue;
-    changes.push({ source: g.source, raw: g.raw, oldCode: g.oldCode, design: res.design, product_code: res.product_code, match_how: res.match_how, color: res.color || '', size: res.size || '', filled: res.filled, conf: res.conf, rows: g.rows });
+    // ส่งสภาพเดิมของกลุ่มไปด้วย → ผู้เรียกใช้จำกัด UPDATE ให้โดนเฉพาะแถวที่หน้าตาแบบนี้
+    changes.push({ source: g.source, raw: g.raw, oldCode: g.oldCode, curDesign: g.curDesign, curColor: g.curColor, curSize: g.curSize, design: res.design, product_code: res.product_code, match_how: res.match_how, color: res.color || '', size: res.size || '', filled: res.filled, conf: res.conf, rows: g.rows });
     if (res.filled) filled += g.rows; else fixed += g.rows;
   }
   return { changes, filled, fixed, scanned: (rows || []).length };
@@ -681,7 +738,8 @@ export function auditImport(master, sku, M, _opts = {}) {
 // คอลัมน์ที่จำเป็นต่อชนิดไฟล์ → เตือนถ้าโครงเปลี่ยน/หาย
 const MP_REQUIRED_COLS = {
   shipnity: ['เลขที่ออเดอร์', 'รายการขาย', 'ยอดขาย'],
-  shopee: ['หมายเลขคำสั่งซื้อ', 'ชื่อตัวเลือก', 'ชื่อสินค้า', 'ราคาขายสุทธิ'],
+  // 'จำนวน' และ 'สถานะการสั่งซื้อ' ต้องอยู่ด้วย — ขาดแล้วได้ qty=0 เงียบ ๆ และใบยกเลิกกลายเป็นใบปกติ
+  shopee: ['หมายเลขคำสั่งซื้อ', 'ชื่อตัวเลือก', 'ชื่อสินค้า', 'ราคาขายสุทธิ', 'จำนวน', 'สถานะการสั่งซื้อ'],
   tiktok: ['Order ID', 'Product Name', 'Variation', 'SKU Subtotal After Discount'],
   catalog: ['product_code', 'design_key'],
 };

@@ -1,17 +1,20 @@
 /* ============================================================
    saleCatalog.jsx — แคตตาล็อกเสื้อ (Sale → แคตตาล็อกเสื้อ) → tmk_shirt_catalog
    ตารางเดียว เน้นข้อมูล — ไม่มีระบบรูปแล้ว (PART 42 · คอลัมน์ image ใน DB คงไว้ ไม่แตะ)
+   รื้อ UI/UX 22 ส.ค. (design-audit): ชิปสถานะ/ไม่ครบใต้หัว · ไซซ์ย่อ · แก้ราคาในตาราง (PriceCell) · ไม่มีถังขยะรายแถว (ลบใน Sheet)
+   · Sheet: FormSection/Field กลาง · pills แทน Select · สี/ไซซ์ toggle แบบเดียวกัน · error ใต้ช่อง + aria · หัวบอกความครบสด
    ============================================================ */
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from './lib/supabaseClient.js';
 import { cachedFetchAll, invalidateSaleCache } from './lib/saleData.js';
 import { useSaleRealtime } from './lib/saleRealtime.js';
-import { Icon, Skel, SkelTable, useDelayedFlag, stockMeta } from './components.jsx';
-import { TMK } from './data.js';
-import { useData } from './dataContext.jsx';
+import { fetchStockCounts } from './lib/stockData.js';
+import { countedByDesign } from './lib/stockCount.js';
+import { Icon, Skel, SkelTable, useDelayedFlag, N } from './components.jsx';
 import { Modal, SideSheet } from './modals-core.jsx';
 import { logAudit } from './lib/audit.js';
-import { toast } from './lib/appBus.js';
+import { toast, canEdit } from './lib/appBus.js';
+import { FormSection, Field } from './saleWidgets.jsx';
 import { logCatalogVersion, fetchCatalogVersions } from './lib/catalogVersions.js';
 import { GOLDEN_DESIGNS, COLOR_TH2CODE } from './lib/shirtCatalog.js';
 import { usePersistedState } from './hooks/usePersistedState.js';
@@ -22,7 +25,6 @@ import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table';
 import { Toggle } from '@/components/ui/toggle';
 import { SearchInput } from '@/components/ui/search-input';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
-import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,7 +35,6 @@ import { EmptyState } from './components/EmptyState.jsx';
 
 const baht = (n) => '฿' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const uid = () => 'sc-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const normCode = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');   // จับคู่ catalog.code ↔ products.sku
 
 // คอลัมน์ที่ตารางใช้จริง (เลิก select '*') — ไม่ดึง image/images แล้ว (เลิกใช้รูป · ลด egress)
 const CATALOG_SEL = 'id,code,name,type,price,price_wholesale,colors,sizes,status,job_type,shirt_class,note,variants,updated_at';
@@ -121,6 +122,60 @@ const ColorDots = ({ colors }) => {
   );
 };
 
+// ไซซ์ย่อในตาราง: "XS–5XL · 9" (ทั้งหมดใน title) — เดิมพิมพ์รายชื่อเต็มซ้ำทุกแถว กินครึ่งตาราง
+const sizeSummary = (sizes) => {
+  const list = [...new Set(splitList(sizes))].sort((a, b) => sizeRank(a) - sizeRank(b));
+  if (!list.length) return null;
+  if (list.length <= 2) return { text: list.join(', '), full: list.join(', '), n: list.length };
+  return { text: `${list[0]}–${list[list.length - 1]} · ${list.length}`, full: list.join(', '), n: list.length };
+};
+// ช่องราคาในตาราง — คลิกแก้ได้เลย · blur/Enter = บันทึก (จุดเหลือง→✓ เขียว เหมือนหน้าเป้า/คอม) · Esc = ยกเลิก
+function PriceCell({ value, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState('');
+  const [state, setState] = useState('');   // '' | 'saving' | 'ok' | 'err'
+  const has = Number(value) > 0;
+  const start = (e) => { e.stopPropagation(); if (!canEdit()) return; setV(has ? String(Number(value)) : ''); setEditing(true); };
+  const commit = async () => {
+    setEditing(false);
+    const n = v.trim() === '' ? 0 : Number(v);
+    if (!Number.isFinite(n) || n < 0 || n === (Number(value) || 0)) return;
+    setState('saving');
+    const ok = await onSave(n);
+    setState(ok ? 'ok' : 'err');
+    if (ok) setTimeout(() => setState(''), 1600);
+  };
+  if (editing) return (
+    <span className="row" style={{ justifyContent: 'flex-end', gap: 4 }} onClick={e => e.stopPropagation()}>
+      <span className="cap" style={{ color: 'var(--ink-4)' }}>฿</span>
+      <input autoFocus type="number" inputMode="decimal" min="0" step="1" value={v} onChange={e => setV(e.target.value)} onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); } }}
+        aria-label="ราคาปลีก" className="num" style={{ width: 88, textAlign: 'right', fontSize: 13, fontWeight: 600, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--surface)', color: 'var(--ink)', outline: 'none' }} />
+    </span>
+  );
+  return (
+    <button type="button" onClick={start} title={has ? 'คลิกเพื่อแก้ราคา' : 'ยังไม่ใส่ราคา — คลิกเพื่อใส่'} className="num cat-price" aria-label={has ? `ราคา ${baht(value)} คลิกเพื่อแก้` : 'ยังไม่ใส่ราคา คลิกเพื่อใส่'}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end', width: '100%', padding: '3px 6px', borderRadius: 6, border: '1px solid transparent', background: 'none', font: 'inherit', fontWeight: 600, color: has ? 'var(--ink)' : 'var(--warn)', cursor: 'text' }}>
+      {state === 'saving' && <span style={{ width: 7, height: 7, borderRadius: 999, background: 'var(--warn)', flex: 'none' }} title="กำลังบันทึก" />}
+      {state === 'ok' && <span style={{ color: 'var(--good)', display: 'inline-flex' }} title="บันทึกแล้ว"><Icon name="check" /></span>}
+      {state === 'err' && <span style={{ color: 'var(--bad)', display: 'inline-flex' }} title="บันทึกไม่สำเร็จ"><Icon name="alertTriangle" /></span>}
+      {has ? baht(value) : '—'}
+    </button>
+  );
+}
+// พิลล์เลือกค่าเดียว (สถานะ/ประเภทงาน/กลุ่มเสื้อ) — เห็นทุกตัวเลือก กดทีเดียว แทน Select
+function PillPick({ options, value, onChange, dotOf, ariaLabel }) {
+  return (
+    <div className="chip-add" role="radiogroup" aria-label={ariaLabel} style={{ marginTop: 0 }}>
+      {options.map(o => { const on = value === o; return (
+        <Toggle type="button" key={o} variant="pill" size="sm" pressed={on} role="radio" aria-checked={on} onPressedChange={() => onChange(o)}>
+          {dotOf && <span style={{ width: 8, height: 8, borderRadius: 999, background: dotOf(o), flex: 'none', marginRight: 5 }} />}{o}
+        </Toggle>
+      ); })}
+    </div>
+  );
+}
+
 /* ---------- Skeleton (ตารางเดียว) ---------- */
 function CatalogSkeleton() {
   return (
@@ -144,23 +199,39 @@ export function ShirtCatalogView() {
   const [statusF, setStatusF] = usePersistedState('tmk-catalog-statusF', []);
   const [jobF, setJobF] = usePersistedState('tmk-catalog-jobF', []);
   const [classF, setClassF] = usePersistedState('tmk-catalog-classF', []);
-  const [stockF, setStockF] = usePersistedState('tmk-catalog-stockF', []);   // 10A — กรองสถานะสต็อก
+  /* key ต้อง -v2: ค่าตัวเลือกเปลี่ยนจาก ['ใกล้หมด','หมดสต็อก'] เป็น ['ใกล้หมด (≤10)','นับได้ 0','ยังไม่เคยนับ']
+     ถ้าใช้ key เดิม ค่าที่ค้างใน localStorage จะไม่ตรงกับตัวเลือกใหม่ → ตารางว่างเปล่า
+     และ dropdown "สต็อก" ถูกซ่อนตอนยังไม่มีข้อมูลนับ = ผู้ใช้หาทางล้างตัวกรองไม่เจอ */
+  const [stockF, setStockF] = usePersistedState('tmk-catalog-stockF-v2', []);   // 10A — กรองสถานะสต็อก
+  const [missF, setMissF] = usePersistedState('tmk-catalog-missF', false);  // ชิป "ข้อมูลไม่ครบ" (ขาดราคา/สี/ไซซ์)
+  const [showErr, setShowErr] = useState(false);   // โชว์ error ใต้ช่อง หลัง blur/กดบันทึกครั้งแรก (validate on blur ไม่ใช่ทุกคีย์)
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [edit, setEdit] = useState(null);      // form object หรือ null
   const [addType, setAddType] = useState(null); // string|null — โหมดพิมพ์หมวดใหม่ใน Select หมวด
   const [busy, setBusy] = useState(false);
   const [delTarget, setDelTarget] = useState(null);
   const [skuOpen, setSkuOpen] = useState(false);   // ส่วนรหัส SKU ในฟอร์ม — พับไว้ก่อน (ลดความรก)
-  // 10A — สถานะสต็อก: จับคู่ catalog.code ↔ tmk_products.sku (client-side, ไม่มี FK) → ป้ายใกล้หมด/หมดสต็อก
-  const { version: dataVersion } = useData() || {};
-  const stockByCode = useMemo(() => {
-    const m = new Map();
-    (TMK.products || []).forEach(p => { const k = normCode(p.sku); if (k) m.set(k, p); });
-    return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- TMK.products เป็น global singleton (ไม่ใช่ reactive value) · dataVersion คือสัญญาณเดียวที่บอกว่าข้อมูลเปลี่ยน ต้องคงไว้
-  }, [dataVersion]);
-  const stockOf = (code) => { const k = normCode(code); if (!k) return null; const p = stockByCode.get(k); return p && (p.stock === 'low' || p.stock === 'out') ? p.stock : null; };
-  const stockBadge = (code) => { const s = stockOf(code); if (!s) return null; const m = stockMeta(s); return <Badge variant="outline" className="ml-1.5 align-middle text-[10px] font-medium" style={{ color: m.c, borderColor: m.c }}>{m.label}</Badge>; };
+  /* สถานะสต็อก (PART 115) — เดิมอ่านจาก tmk_products.stock ของ "ระบบคลังเก่า" ที่ถอดไปตั้งแต่ PART 35
+     → ไม่มีใครอัปเดตอีกเลย ป้ายจึงโกหก · ตอนนี้อ่านจากระบบนับสต็อกจริง (tmk_stock_counts)
+     จงใจใช้ "ยอดที่นับได้ล่าสุด" (ไม่หักยอดขายหลังวันนับ) เพื่อไม่ต้องดึงตารางยอดขายมาทั้งก้อนในหน้านี้
+     → ป้ายจึงบอกวันที่นับกำกับเสมอ · คงเหลือสดดูที่หน้าสต็อก */
+  const [stockByDesignName, setStockByDesignName] = useState({});
+  useEffect(() => { let live = true; (async () => {
+    const r = await fetchStockCounts();
+    if (live && !r.missing && !r.error) setStockByDesignName(countedByDesign(r.rows));
+  })(); return () => { live = false; }; }, []);
+  const stockOf = (name) => stockByDesignName[String(name || '').trim()] || null;
+  const stockBadge = (name) => {
+    const st = stockOf(name);
+    if (!st) return null;
+    const tone = st.qty <= 0 ? 'var(--bad)' : st.qty <= 10 ? 'var(--warn)' : 'var(--ink-3)';
+    return (
+      <Badge variant="outline" className="ml-1.5 align-middle text-[10px] font-medium" style={{ color: tone, borderColor: tone }}
+        title={`ยอดที่นับได้ล่าสุด ${st.date} · ${st.skus} SKU — ยังไม่หักที่ขายหลังวันนับ (ดูคงเหลือสดที่หน้าสต็อก)`}>
+        {st.qty <= 0 ? 'นับได้ 0' : `นับได้ ${N(st.qty)}`} · {st.date.slice(5)}
+      </Badge>
+    );
+  };
   const [importing, setImporting] = useState(false);
   const [askImport, setAskImport] = useState(false);
 
@@ -184,7 +255,7 @@ export function ShirtCatalogView() {
   useEffect(() => { load(); }, []);
   useSaleRealtime(['tmk_shirt_catalog'], () => load(true)); // แคตตาล็อกแก้ที่ไหน เห็นสดทุกเครื่อง
   // eslint-disable-next-line react-hooks/set-state-in-effect -- sync รีเซ็ตโหมดฟอร์มตอนปิดชีต/เปลี่ยนรายการ (รื้อเป็น derived state เสี่ยงกว่าประโยชน์)
-  useEffect(() => { if (!edit) { setAddType(null); setSkuOpen(false); } }, [edit]);   // ปิดชีต/เปลี่ยนรายการ → รีเซ็ตโหมดฟอร์ม
+  useEffect(() => { if (!edit) { setAddType(null); setSkuOpen(false); setShowErr(false); } }, [edit]);   // ปิดชีต/เปลี่ยนรายการ → รีเซ็ตโหมดฟอร์ม
 
   const types = useMemo(() => { const s = new Set(); (items || []).forEach(i => { if (i.type) s.add(i.type); }); return [...s].sort(); }, [items]);
   const filtered = useMemo(() => {
@@ -193,25 +264,30 @@ export function ShirtCatalogView() {
     if (statusF.length) r = r.filter(i => statusF.includes(i.status || 'พร้อมขาย'));
     if (jobF.length) r = r.filter(i => jobF.includes(i.job_type || 'ปลีก'));
     if (classF.length) r = r.filter(i => classF.includes(i.shirt_class || 'เสื้อปกติ'));
-    if (stockF.length) r = r.filter(i => { const s = stockOf(i.code); const lbl = s === 'out' ? 'หมดสต็อก' : s === 'low' ? 'ใกล้หมด' : null; return lbl && stockF.includes(lbl); });
+    if (stockF.length) r = r.filter(i => {
+      const st = stockOf(i.name);
+      const lbl = !st ? 'ยังไม่เคยนับ' : st.qty <= 0 ? 'นับได้ 0' : st.qty <= 10 ? 'ใกล้หมด (≤10)' : null;
+      return lbl && stockF.includes(lbl);
+    });
+    if (missF) r = r.filter(i => missingOf(i).length > 0);
     const ql = q.trim().toLowerCase();
     if (ql) r = r.filter(i => `${i.code} ${i.name} ${i.type} ${i.colors} ${i.note}`.toLowerCase().includes(ql));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stockOf สร้างใหม่ทุก render (ใส่เป็น dep = memo ไร้ผล) · input จริงของมันคือ stockByCode ซึ่งอยู่ใน deps แล้ว
-  }, [items, typeF, statusF, jobF, classF, stockF, stockByCode, q]);
-  const nFilters = typeF.length + statusF.length + jobF.length + classF.length + stockF.length;
+  }, [items, typeF, statusF, jobF, classF, stockF, missF, stockByDesignName, q]);
+  const nFilters = typeF.length + jobF.length + classF.length + stockF.length;   // สถานะ/ไม่ครบ เป็นชิปใต้หัว ไม่นับในตัวกรองพับ
   const activeChips = [
     ...typeF.map(v => ({ dim: 'หมวด', v, clear: () => setTypeF(typeF.filter(x => x !== v)) })),
-    ...statusF.map(v => ({ dim: 'สถานะ', v, clear: () => setStatusF(statusF.filter(x => x !== v)) })),
     ...jobF.map(v => ({ dim: 'งาน', v, clear: () => setJobF(jobF.filter(x => x !== v)) })),
     ...classF.map(v => ({ dim: 'กลุ่มเสื้อ', v, clear: () => setClassF(classF.filter(x => x !== v)) })),
     ...stockF.map(v => ({ dim: 'สต็อก', v, clear: () => setStockF(stockF.filter(x => x !== v)) })),
   ];
-  const clearFilters = () => { setTypeF([]); setStatusF([]); setJobF([]); setClassF([]); setStockF([]); };
+  const clearFilters = () => { setTypeF([]); setStatusF([]); setJobF([]); setClassF([]); setStockF([]); setMissF(false); };
 
   const save = async () => {
     if (!edit) return;
-    if (!edit.code.trim() && !edit.name.trim()) { toast('ใส่รหัสหรือชื่อลายอย่างน้อย 1 อย่าง', 'error'); return; }
+    if (!edit.code.trim() && !edit.name.trim()) { setShowErr(true); document.getElementById('cat-name')?.focus(); return; }   // error ใต้ช่อง + โฟกัสช่องแรกที่ผิด (ไม่ toast ซ้ำ)
+    if (Number(edit.price) < 0) { document.getElementById('cat-price')?.focus(); return; }
     setBusy(true);
     const row = {
       id: edit.id || uid(),
@@ -278,6 +354,19 @@ export function ShirtCatalogView() {
     setDelTarget(null); setEdit(null);
   };
 
+  // แก้ราคาจากช่องในตาราง — update เฉพาะคอลัมน์ราคา (ไม่ทับคอลัมน์อื่น) · คืน true/false ให้ช่องโชว์ ✓/⚠
+  const quickPrice = async (it, price) => {
+    const updated_at = new Date().toISOString();
+    const { error } = await supabase.from('tmk_shirt_catalog').update({ price, updated_at }).eq('id', it.id);
+    if (error) { toast('บันทึกราคาไม่สำเร็จ: ' + error.message, 'error'); return false; }
+    const row = { ...it, price, updated_at };
+    logAudit({ action: 'update', entityType: 'product', entityName: row.code || row.name || 'catalog', entityId: row.id || row.code, summary: `แก้ราคา ${row.code || row.name} → ฿${Number(price).toLocaleString()}`, fields: [{ label: 'ราคา', value: `฿${Number(price).toLocaleString()}` }] });
+    logCatalogVersion(row);
+    invalidateSaleCache('tmk_shirt_catalog');
+    setItems(prev => (prev || []).map(x => (x.id === it.id ? row : x)));
+    return true;
+  };
+
   // นำเข้า 47 ลายจากตารางลายเสื้อ (golden) — พร้อมรหัส/หมวด/ราคา/สี/ไซซ์ · ข้ามลายที่มีแล้ว
   const importLegacy = async () => {
     setAskImport(false); setImporting(true);
@@ -318,18 +407,38 @@ export function ShirtCatalogView() {
       <Card className="p-[22px]">
         <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
         <div className="row between" style={{ flexWrap: 'wrap', gap: 10 }}>
-          <h3 className="m-0 text-base font-bold leading-tight" style={{ color: 'var(--ink)', whiteSpace: 'nowrap' }}>สินค้า</h3>
+          <h3 className="m-0 text-base font-bold leading-tight" style={{ color: 'var(--ink)', whiteSpace: 'nowrap' }}>สินค้า <span className="dim" style={{ fontWeight: 500 }}>· {items.length}</span></h3>
           <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-            <SearchInput value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหา" wrapperClassName="w-full sm:w-[240px]" />
+            <SearchInput value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหา รหัส/ชื่อ/สี" wrapperClassName="w-full sm:w-[240px]" />
             <CollapsibleTrigger asChild>
               <Button variant="outline" size="sm" className="gap-2 flex-none">
                 <Icon name="filter" /> ตัวกรอง{nFilters > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">{nFilters}</Badge>}
-                <Icon name={filtersOpen ? 'up' : 'down'} />
+                <Icon name="chevD" style={filtersOpen ? { transform: 'rotate(180deg)' } : undefined} />
               </Button>
             </CollapsibleTrigger>
             <Button size="sm" className="flex-none" onClick={() => setEdit(blank())}><Icon name="plus" /> เพิ่มสินค้า</Button>
           </div>
         </div>
+        {/* ชิปสถานะ + ข้อมูลไม่ครบ — กดทีเดียว ไม่ต้องเปิดตัวกรอง */}
+        {!empty && (() => {
+          const all = items || [];
+          const cnt = (st) => all.filter(i => (i.status || 'พร้อมขาย') === st).length;
+          const nMiss = all.filter(i => missingOf(i).length > 0).length;
+          const cur = statusF.length === 1 ? statusF[0] : statusF.length === 0 ? 'all' : 'multi';
+          const chip = (on, label, n, tone, onClick, title) => (
+            <button type="button" key={label} onClick={onClick} title={title} aria-pressed={on} className="cat-chip" style={{ borderColor: on ? (tone || 'var(--ink-2)') : 'var(--line)', background: on ? (tone ? `color-mix(in srgb, ${tone} 12%, var(--surface))` : 'var(--ink-2)') : 'var(--surface)', color: on ? (tone || 'var(--surface)') : 'var(--ink-3)' }}>
+              {tone && <span style={{ width: 7, height: 7, borderRadius: 999, background: tone, flex: 'none' }} />}{label} <b className="num" style={{ fontWeight: 700 }}>{n}</b>
+            </button>
+          );
+          return (
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
+              {chip(cur === 'all' && !missF, 'ทั้งหมด', all.length, null, () => { setStatusF([]); setMissF(false); })}
+              {STATUSES.map(st => chip(cur === st, st, cnt(st), statusTone(st), () => setStatusF(cur === st ? [] : [st]), `ดูเฉพาะสถานะ ${st}`))}
+              <span style={{ width: 1, height: 18, background: 'var(--line)', margin: '0 4px' }} />
+              {chip(missF, 'ข้อมูลไม่ครบ', nMiss, 'var(--warn)', () => setMissF(v => !v), 'ขาด ราคา / สี / ไซซ์ — เติมได้จากตาราง (ราคา) หรือเปิดแก้')}
+            </div>
+          );
+        })()}
           {activeChips.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 mt-3">
               {activeChips.map(({ dim, v, clear }) => <Badge key={dim + v} variant="outline" onClick={clear} title="คลิกเพื่อเอาออก" style={{ cursor: 'pointer', padding: '2px 8px' }}><span style={{ color: 'var(--ink-4)' }}>{dim}:</span> {v || '(ไม่ระบุ)'} <Icon name="x" /></Badge>)}
@@ -340,10 +449,9 @@ export function ShirtCatalogView() {
             <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', paddingTop: 12, marginTop: 10, borderTop: '1px solid var(--line)' }}>
               <span className="cap" style={{ color: 'var(--ink-4)', fontWeight: 600, width: 64, flexShrink: 0 }}>ตัวกรอง</span>
               <MultiSelect label="หมวด" options={types} value={typeF} onChange={setTypeF} />
-              <MultiSelect label="สถานะ" options={STATUSES} value={statusF} onChange={setStatusF} />
               <MultiSelect label="งาน" options={JOB_TYPES} value={jobF} onChange={setJobF} />
               <MultiSelect label="กลุ่มเสื้อ" options={SHIRT_CLASSES} value={classF} onChange={setClassF} />
-              {stockByCode.size > 0 && <MultiSelect label="สต็อก" options={['ใกล้หมด', 'หมดสต็อก']} value={stockF} onChange={setStockF} />}
+              {Object.keys(stockByDesignName).length > 0 && <MultiSelect label="สต็อก" options={['ใกล้หมด (≤10)', 'นับได้ 0', 'ยังไม่เคยนับ']} value={stockF} onChange={setStockF} />}
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -370,23 +478,33 @@ export function ShirtCatalogView() {
               { key: 'type', label: 'หมวด', accessor: it => it.type || '' },
               { key: 'price', label: 'ราคาปลีก', align: 'right', accessor: it => Number(it.price) || 0 },
               { key: 'colors', label: 'สี', sortable: false },
-              { key: 'sizes', label: 'ไซซ์', accessor: it => it.sizes || '' },
+              { key: 'sizes', label: 'ไซซ์', accessor: it => splitList(it.sizes).length },
               { key: 'status', label: 'สถานะ', accessor: it => it.status || 'พร้อมขาย' },
-              { key: 'act', label: '', sortable: false },
             ]}
             rows={filtered}
             renderRow={it => {
-              const miss = missingOf(it);
+              const miss = missingOf(it); const sz = sizeSummary(it.sizes); const st = it.status || 'พร้อมขาย'; const nColors = splitList(it.colors).length;
               return (
-                <TableRow key={it.id} onClick={() => setEdit(toForm(it))} style={{ cursor: 'pointer' }}>
-                  <TableCell className="num" style={{ whiteSpace: 'nowrap' }}>{it.code || '—'}</TableCell>
-                  <TableCell style={{ fontWeight: 600 }}>{it.name || '—'}{stockBadge(it.code)}{it.job_type && it.job_type !== 'ปลีก' && <Badge variant="secondary" className="ml-1.5 rounded-full text-[10px] font-semibold align-middle">{it.job_type}</Badge>}</TableCell>
-                  <TableCell className="cap">{it.type || '—'}</TableCell>
-                  <TableCell className="num" style={{ textAlign: 'right', fontWeight: 600 }}>{baht(it.price)}</TableCell>
-                  <TableCell><ColorDots colors={it.colors} /></TableCell>
-                  <TableCell className="cap" style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.sizes || '—'}</TableCell>
-                  <TableCell><div className="row" style={{ gap: 5, flexWrap: 'wrap' }}><Badge variant="outline" style={{ fontSize: 10, color: statusTone(it.status), fontWeight: 700 }}>{it.status || 'พร้อมขาย'}</Badge>{miss.length > 0 && <Badge variant="warning" className="rounded-full text-[10px] font-medium">ขาด {miss.join('/')}</Badge>}</div></TableCell>
-                  <TableCell><Button variant="outline" size="sm" onClick={e => { e.stopPropagation(); setDelTarget(it); }} title="ลบ"><Icon name="trash" /></Button></TableCell>
+                <TableRow key={it.id} onClick={() => setEdit(toForm(it))} style={{ cursor: 'pointer' }} title="คลิกเพื่อแก้ไข">
+                  <TableCell className="num" style={{ whiteSpace: 'nowrap', color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{it.code || '—'}</TableCell>
+                  <TableCell style={{ fontWeight: 600 }}>
+                    <span className="row" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span>{it.name || <span style={{ color: 'var(--ink-4)', fontWeight: 400 }}>(ไม่มีชื่อ)</span>}</span>
+                      {stockBadge(it.name)}
+                      {it.job_type && it.job_type !== 'ปลีก' && <Badge variant="secondary" className="rounded-full text-[10px] font-semibold" title="ประเภทงาน">{it.job_type}</Badge>}
+                      {it.shirt_class && it.shirt_class !== 'เสื้อปกติ' && <Badge variant="outline" className="rounded-full text-[10px] font-medium" title="กลุ่มเสื้อ">{it.shirt_class}</Badge>}
+                    </span>
+                  </TableCell>
+                  <TableCell className="cap" style={{ color: 'var(--ink-3)' }}>{it.type || '—'}</TableCell>
+                  <TableCell style={{ textAlign: 'right', padding: '4px 8px' }}><PriceCell value={it.price} onSave={(n) => quickPrice(it, n)} /></TableCell>
+                  <TableCell><span className="row" style={{ gap: 6, alignItems: 'center' }}><ColorDots colors={it.colors} />{nColors > 0 && <span className="cap num" style={{ color: 'var(--ink-4)' }}>{nColors}</span>}</span></TableCell>
+                  <TableCell className="cap num" style={{ whiteSpace: 'nowrap', color: sz ? 'var(--ink-2)' : 'var(--ink-4)' }} title={sz ? sz.full : 'ยังไม่ใส่ไซซ์'}>{sz ? sz.text : '—'}</TableCell>
+                  <TableCell>
+                    <span className="row" style={{ gap: 8, alignItems: 'center', whiteSpace: 'nowrap' }}>
+                      <span className="row cap" style={{ gap: 5, color: statusTone(st), fontWeight: 600 }}><span style={{ width: 7, height: 7, borderRadius: 999, background: statusTone(st), flex: 'none' }} />{st}</span>
+                      {miss.length > 0 && <span role="img" aria-label={`ขาด ${miss.join(', ')}`} title={`ขาด ${miss.join(' · ')} — คลิกแถวเพื่อเติม${miss.includes('ราคา') ? ' (ราคาแก้ในช่องได้เลย)' : ''}`} style={{ color: 'var(--warn)', display: 'inline-flex' }}><Icon name="alertTriangle" /></span>}
+                    </span>
+                  </TableCell>
                 </TableRow>
               );
             }} />
@@ -394,124 +512,123 @@ export function ShirtCatalogView() {
         )}
       </Card>
 
-      {/* ---------- เพิ่ม/แก้ไข ---------- */}
-      {edit && (
-        <SideSheet size="lg" icon="bag" title={edit.id ? 'แก้ไขสินค้า' : 'เพิ่มสินค้า'} sub="กรอกเฉพาะข้อมูล — ไม่ต้องใส่รูป" onClose={() => setEdit(null)}
+      {/* ---------- เพิ่ม/แก้ไข (Sheet ขวา shadcn · ฟอร์มกลาง FormSection/Field · pills แทน Select · error ใต้ช่อง) ---------- */}
+      {edit && (() => {
+        const miss = missingOf(edit);
+        const noKey = !edit.code.trim() && !edit.name.trim();
+        const badPrice = Number(edit.price) < 0;
+        const saveWhy = noKey ? 'ใส่ชื่อลายหรือรหัสสินค้าอย่างน้อย 1 อย่าง' : badPrice ? 'ราคาต้องไม่ติดลบ' : undefined;
+        const colorList = splitList(edit.colors);
+        const setColors = (arr) => setEdit({ ...edit, colors: [...new Set(arr)].join(', ') });
+        const sizeList = splitList(edit.sizes);
+        const setSizes = (arr) => setEdit({ ...edit, sizes: [...new Set(arr)].sort((a, b) => sizeRank(a) - sizeRank(b)).join(', ') });
+        const nSku = (colorList.length || 1) * (sizeList.length || 1);
+        const overrideN = Object.keys(edit.variants || {}).length;
+        const skuAll = (() => { const base = (edit.code || '').trim(); if (!base) return []; const cols = colorList.length ? colorList : [null], szs = sizeList.length ? sizeList : [null]; const vmap = edit.variants || {}; const out = []; cols.forEach(c => szs.forEach(sz => { const k = `${c || ''}|${sz || ''}`; const o = vmap[k]; out.push((o != null && o !== '') ? o : [base, c ? (COLOR_TH2CODE[c] || c) : null, sz].filter(Boolean).join('-')); })); return out; })();
+        return (
+        <SideSheet size="lg" icon="bag" title={edit.name.trim() || (edit.id ? 'แก้ไขสินค้า' : 'เพิ่มสินค้า')}
+          sub={<span className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {edit.id && edit.code && <span className="row num" title="รหัสเป็นกุญแจผูกออเดอร์ทั้งหมด — เปลี่ยนไม่ได้ · ถ้าต้องการรหัสใหม่ให้สร้างลายใหม่" style={{ gap: 4, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-3)', border: '1px solid var(--line)', borderRadius: 999, padding: '1px 8px' }}><Icon name="lock" />{edit.code}</span>}
+            {!edit.id && <span className="cap" style={{ color: 'var(--ink-4)' }}>สินค้าใหม่</span>}
+            {miss.length ? <span className="row cap" style={{ gap: 4, color: 'var(--warn)', fontWeight: 600 }}><Icon name="alertTriangle" /> ขาด {miss.join(' · ')}</span> : <span className="row cap" style={{ gap: 4, color: 'var(--good)', fontWeight: 600 }}><Icon name="check" /> ข้อมูลครบ</span>}
+          </span>}
+          onClose={() => setEdit(null)}
           footer={<div className="row between" style={{ width: '100%' }}>
             {edit.id ? <Button variant="outline" size="sm" className="text-[var(--bad)]" onClick={() => { setDelTarget(edit); setEdit(null); }}><Icon name="trash" /> ลบ</Button> : <span />}
             <div className="row" style={{ gap: 8 }}>
               <Button variant="outline" onClick={() => setEdit(null)}>ยกเลิก</Button>
-              <Button disabled={busy || (!edit.code.trim() && !edit.name.trim()) || Number(edit.price) < 0} title={(!edit.code.trim() && !edit.name.trim()) ? 'ใส่รหัสหรือชื่ออย่างน้อย 1 อย่าง' : undefined} onClick={save}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</Button>
+              <Button disabled={busy} title={saveWhy} onClick={save}>{busy ? 'กำลังบันทึก…' : edit.id ? 'บันทึกการแก้ไข' : 'เพิ่มสินค้า'}</Button>
             </div>
           </div>}>
-          <div style={{ display: 'grid', gap: 14 }}>
+          <div style={{ display: 'grid', gap: 12 }}>
             {/* ข้อมูลสินค้า */}
-            <SecHead>ข้อมูลสินค้า</SecHead>
-            <div className="form-grid2">
-              <label className="fld"><span>รหัสสินค้า</span><Input value={edit.code} disabled={!!edit.id} onChange={e => setEdit({ ...edit, code: e.target.value })} placeholder="เช่น JKN111" />{edit.id && <span className="cap" style={{ color: 'var(--ink-4)' }}>🔒 รหัสล็อกไว้ (เป็นกุญแจเชื่อมออเดอร์ทั้งหมด) — ถ้าต้องเปลี่ยนรหัสจริง ให้สร้างลายใหม่</span>}</label>
-              <label className="fld"><span>ชื่อลาย / ชื่อเสื้อ</span><Input value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} placeholder="เช่น กนกประยุกต์" />{edit.id && <span className="cap" style={{ color: 'var(--ink-4)' }}>แก้ชื่อได้ — รายงาน/แดชบอร์ด/CRM อัปเดตทันที (ผูกด้วยรหัส)</span>}</label>
-              <div className="fld"><span>หมวด</span>
-                {addType === null ? (
-                  <Select value={edit.type || 'อื่นๆ'} onValueChange={v => { if (v === ADD_TYPE) setAddType(''); else setEdit({ ...edit, type: v }); }}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[...new Set([...TYPES, ...types, edit.type].filter(Boolean))].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                      <SelectItem value={ADD_TYPE}>➕ เพิ่มหมวดใหม่…</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="row" style={{ gap: 6 }}>
-                    <Input autoFocus value={addType} onChange={e => setAddType(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (addType.trim()) setEdit({ ...edit, type: addType.trim() }); setAddType(null); } else if (e.key === 'Escape') { e.preventDefault(); setAddType(null); } }}
-                      placeholder="พิมพ์หมวดใหม่" />
-                    <Button size="sm" onClick={() => { if (addType.trim()) setEdit({ ...edit, type: addType.trim() }); setAddType(null); }} title="ยืนยัน"><Icon name="check" /></Button>
-                    <Button variant="outline" size="sm" onClick={() => setAddType(null)} title="ยกเลิก"><Icon name="x" /></Button>
+            <FormSection icon="bag" title="ข้อมูลสินค้า">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="ชื่อลาย / ชื่อเสื้อ">
+                  <Input id="cat-name" aria-label="ชื่อลาย / ชื่อเสื้อ" autoComplete="off" autoFocus={!edit.id} value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} onBlur={() => setShowErr(true)} placeholder="เช่น กนกประยุกต์" aria-invalid={showErr && noKey} aria-describedby={showErr && noKey ? 'cat-key-err' : undefined} title={edit.id ? 'แก้ชื่อได้ — รายงาน/แดชบอร์ด/CRM อัปเดตทันที (ผูกด้วยรหัส)' : undefined} />
+                </Field>
+                <Field label="รหัสสินค้า">
+                  {edit.id
+                    ? <div className="row num" title="รหัสเป็นกุญแจผูกออเดอร์ทั้งหมด — เปลี่ยนไม่ได้ · ถ้าต้องการรหัสใหม่ให้สร้างลายใหม่" style={{ gap: 6, height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--surface-2)', color: 'var(--ink-3)', fontFamily: 'var(--mono)', fontSize: 13 }}><Icon name="lock" />{edit.code || '—'}<span className="cap" style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>ล็อก</span></div>
+                    : <Input id="cat-code" aria-label="รหัสสินค้า" autoComplete="off" spellCheck={false} value={edit.code} onChange={e => setEdit({ ...edit, code: e.target.value })} onBlur={() => setShowErr(true)} placeholder="เช่น JKN111" className="font-mono" aria-invalid={showErr && noKey} aria-describedby={showErr && noKey ? 'cat-key-err' : undefined} />}
+                </Field>
+                {showErr && noKey && <p id="cat-key-err" className="field-err sm:col-span-2" role="alert">ใส่ชื่อลายหรือรหัสสินค้าอย่างน้อย 1 อย่าง — รหัสใช้สร้าง SKU และผูกออเดอร์</p>}
+                <Field label="ราคาปลีก">
+                  <div className="row" style={{ position: 'relative' }}>
+                    <span className="num" aria-hidden style={{ position: 'absolute', left: 12, color: 'var(--ink-4)', fontWeight: 700, fontSize: 15, pointerEvents: 'none' }}>฿</span>
+                    <Input id="cat-price" aria-label="ราคาปลีก (บาท)" type="number" inputMode="decimal" min="0" step="1" aria-invalid={badPrice} aria-describedby={badPrice ? 'cat-price-err' : undefined} value={edit.price} onChange={e => setEdit({ ...edit, price: e.target.value })} placeholder="0" className="num pl-7 h-10 text-[17px] font-bold" style={{ color: Number(edit.price) > 0 ? 'var(--ink)' : 'var(--ink-3)' }} />
                   </div>
-                )}
+                  {badPrice && <p id="cat-price-err" className="field-err" role="alert">ราคาต้องไม่ติดลบ</p>}
+                </Field>
+                <Field label="หมวด">
+                  {addType === null ? (
+                    <Select value={edit.type || 'อื่นๆ'} onValueChange={v => { if (v === ADD_TYPE) setAddType(''); else setEdit({ ...edit, type: v }); }}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {[...new Set([...TYPES, ...types, edit.type].filter(Boolean))].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        <SelectItem value={ADD_TYPE}><span className="row" style={{ gap: 6 }}><Icon name="plus" /> เพิ่มหมวดใหม่…</span></SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="row" style={{ gap: 6 }}>
+                      <Input autoFocus value={addType} onChange={e => setAddType(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (addType.trim()) setEdit({ ...edit, type: addType.trim() }); setAddType(null); } else if (e.key === 'Escape') { e.preventDefault(); setAddType(null); } }}
+                        placeholder="พิมพ์หมวดใหม่ แล้ว Enter" />
+                      <Button size="sm" onClick={() => { if (addType.trim()) setEdit({ ...edit, type: addType.trim() }); setAddType(null); }} title="ยืนยัน"><Icon name="check" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => setAddType(null)} title="ยกเลิก"><Icon name="x" /></Button>
+                    </div>
+                  )}
+                </Field>
               </div>
-              <div className="fld"><span>สถานะ</span>
-                <Select value={edit.status} onValueChange={v => setEdit({ ...edit, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="fld"><span>ประเภทงาน</span>
-                <Select value={edit.job_type || 'ปลีก'} onValueChange={v => setEdit({ ...edit, job_type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{JOB_TYPES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="fld"><span>กลุ่มเสื้อ</span>
-                <Select value={edit.shirt_class || 'เสื้อปกติ'} onValueChange={v => setEdit({ ...edit, shirt_class: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{SHIRT_CLASSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <label className="fld"><span>ราคาปลีก (฿)</span><Input type="number" inputMode="decimal" min="0" step="0.01" aria-invalid={Number(edit.price) < 0} value={edit.price} onChange={e => setEdit({ ...edit, price: e.target.value })} placeholder="0" />{Number(edit.price) < 0 && <span className="field-err">ราคาต้องไม่ติดลบ</span>}</label>
-            </div>
-            {!edit.code.trim() && !edit.name.trim() && <span className="field-err">ใส่รหัสสินค้าหรือชื่อลายอย่างน้อย 1 อย่าง</span>}
-
-            {/* สี & ไซซ์ */}
-            <Separator />
-            <SecHead>สี &amp; ไซซ์</SecHead>
-            {/* สีที่มี — ชิป Badge แก้รายสี + พาเลตกดเพิ่ม */}
-            {(() => {
-              const colorList = splitList(edit.colors);
-              const setColors = (arr) => setEdit({ ...edit, colors: [...new Set(arr)].join(', ') });
-              return (
-                <div className="fld">
-                  <span>สีที่มี ({colorList.length})</span>
-                  {/* ข้างนอก = เฉพาะสีที่เลือก (ชิปถอดได้) · เพิ่มสีผ่าน dropdown */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {colorList.map(c => (
-                      <Badge key={c} variant="secondary" className="gap-1.5 rounded-full py-1 pl-2 pr-1 font-normal">
-                        <span className="sw" style={{ background: COLOR_HEX[c] || '#bbb' }} />{c}
-                        <button type="button" aria-label={`ลบ ${c}`} className="ml-0.5 inline-flex rounded-full p-0.5 text-[var(--ink-4)] hover:bg-[var(--surface-2)] hover:text-[var(--bad)]" onClick={() => setColors(colorList.filter(x => x !== c))}><Icon name="x" /></button>
-                      </Badge>
-                    ))}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 rounded-full px-2.5 font-normal border-dashed"><Icon name="plus" /> เพิ่มสี</Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="start" className="w-64 p-2">
-                        <div className="flex flex-wrap gap-1.5">
-                          {STD_COLORS.filter(c => !colorList.includes(c)).map(c => <Button type="button" key={c} variant="outline" size="sm" className="h-7 gap-1.5 rounded-full px-2.5 font-normal" onClick={() => setColors([...colorList, c])}><span className="sw" style={{ background: COLOR_HEX[c] }} />{c}</Button>)}
-                        </div>
-                        <Input className="h-7 mt-2" placeholder="+ สีอื่น (พิมพ์แล้วกด Enter)" onKeyDown={e => { const v = e.target.value.trim(); if (e.key === 'Enter' && v) { e.preventDefault(); setColors([...colorList, v]); e.target.value = ''; } }} />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
+              <div className="grid grid-cols-1 gap-3 mt-3">
+                <Field label="สถานะ"><PillPick ariaLabel="สถานะ" options={STATUSES} value={edit.status || 'พร้อมขาย'} onChange={v => setEdit({ ...edit, status: v })} dotOf={statusTone} /></Field>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="ประเภทงาน"><PillPick ariaLabel="ประเภทงาน" options={JOB_TYPES} value={edit.job_type || 'ปลีก'} onChange={v => setEdit({ ...edit, job_type: v })} /></Field>
+                  <Field label="กลุ่มเสื้อ"><PillPick ariaLabel="กลุ่มเสื้อ" options={SHIRT_CLASSES} value={edit.shirt_class || 'เสื้อปกติ'} onChange={v => setEdit({ ...edit, shirt_class: v })} /></Field>
                 </div>
-              );
-            })()}
+              </div>
+            </FormSection>
 
-            {/* ไซซ์ที่มี — toggle */}
-            {(() => {
-              const sizeList = splitList(edit.sizes);
-              const setSizes = (arr) => setEdit({ ...edit, sizes: [...new Set(arr)].sort((a, b) => sizeRank(a) - sizeRank(b)).join(', ') });
-              return (
-                <div className="fld">
-                  <span>ไซซ์ที่มี ({sizeList.length}) — กดเลือก</span>
-                  <div className="chip-add">
-                    {STD_SIZES.map(s => { const on = sizeList.includes(s); return <Toggle type="button" key={s} variant="pill" size="sm" pressed={on} onPressedChange={() => setSizes(on ? sizeList.filter(x => x !== s) : [...sizeList, s])}>{s}</Toggle>; })}
-                    <Input className="h-7 w-24" placeholder="+ อื่น ↵" onKeyDown={e => { const v = e.target.value.trim().toUpperCase(); if (e.key === 'Enter' && v) { e.preventDefault(); setSizes([...sizeList, v]); e.target.value = ''; } }} />
-                  </div>
+            {/* สี & ไซซ์ — พิลล์ toggle ทั้งคู่ (แพตเทิร์นเดียวกัน) */}
+            <FormSection icon="tag" title="สี & ไซซ์" sub={colorList.length || sizeList.length ? `${colorList.length} สี × ${sizeList.length} ไซซ์ = ${nSku} SKU` : 'เลือกสี/ไซซ์ → สร้างรหัส SKU ให้อัตโนมัติ'}>
+              <Field label={`สีที่มี (${colorList.length})`}>
+                <div className="chip-add" style={{ marginTop: 0 }}>
+                  {[...STD_COLORS, ...colorList.filter(c => !STD_COLORS.includes(c))].map(c => { const on = colorList.includes(c); return (
+                    <Toggle type="button" key={c} variant="pill" size="sm" pressed={on} aria-label={`สี ${c}`} onPressedChange={() => setColors(on ? colorList.filter(x => x !== c) : [...colorList, c])}>
+                      <span className="sw" style={{ background: COLOR_HEX[c] || '#bbb', marginRight: 5 }} />{c}
+                    </Toggle>
+                  ); })}
+                  <Input className="h-7 w-28" placeholder="+ สีอื่น ↵" aria-label="เพิ่มสีอื่น" onKeyDown={e => { const v = e.target.value.trim(); if (e.key === 'Enter' && v) { e.preventDefault(); setColors([...colorList, v]); e.target.value = ''; } }} />
                 </div>
-              );
-            })()}
+              </Field>
+              <div className="mt-3">
+              <Field label={`ไซซ์ที่มี (${sizeList.length})`}>
+                <div className="chip-add" style={{ marginTop: 0 }}>
+                  {[...STD_SIZES, ...sizeList.filter(z => !STD_SIZES.includes(z))].map(z => { const on = sizeList.includes(z); return <Toggle type="button" key={z} variant="pill" size="sm" pressed={on} aria-label={`ไซซ์ ${z}`} onPressedChange={() => setSizes(on ? sizeList.filter(x => x !== z) : [...sizeList, z])}>{z}</Toggle>; })}
+                  <Input className="h-7 w-24" placeholder="+ อื่น ↵" aria-label="เพิ่มไซซ์อื่น" onKeyDown={e => { const v = e.target.value.trim().toUpperCase(); if (e.key === 'Enter' && v) { e.preventDefault(); setSizes([...sizeList, v]); e.target.value = ''; } }} />
+                </div>
+              </Field>
+              </div>
+            </FormSection>
 
-            {/* รหัสสินค้า (SKU) — สี × ไซซ์ · พับไว้ (เปิดเมื่อต้องแก้รหัสรายตัว) */}
-            <Separator />
+            {/* รหัสสินค้า (SKU) — พับไว้ · หัวแถวบอกจำนวน/แก้เอง + คัดลอกได้ไม่ต้องกาง */}
             <Collapsible open={skuOpen} onOpenChange={setSkuOpen}>
-              <CollapsibleTrigger asChild>
-                <button type="button" className="row between" style={{ width: '100%', background: 'none', border: 0, padding: '4px 0', cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>
-                  <SecHead>รหัสสินค้า (SKU) <span className="cap" style={{ color: 'var(--ink-4)' }}>({(splitList(edit.colors).length || 1) * (splitList(edit.sizes).length || 1)} แบบ — สร้างอัตโนมัติจากสี×ไซซ์)</span></SecHead>
-                  <span style={{ display: 'inline-flex', color: 'var(--ink-4)', transition: 'transform .15s', transform: skuOpen ? 'rotate(180deg)' : 'none' }}><Icon name="chevD" /></span>
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
+              <div className="rounded-xl border" style={{ borderColor: 'var(--line)', background: 'var(--surface)' }}>
+                <div className="row between" style={{ padding: '10px 14px', gap: 8, flexWrap: 'wrap' }}>
+                  <CollapsibleTrigger asChild>
+                    <button type="button" className="row" style={{ gap: 8, background: 'none', border: 0, padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left', color: 'var(--ink)', minWidth: 0 }} aria-expanded={skuOpen}>
+                      <span className="grid place-items-center rounded-lg size-7" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', flex: 'none' }}><Icon name="layers" /></span>
+                      <span className="text-[13px] font-bold">รหัส SKU</span>
+                      <span className="cap" style={{ color: 'var(--ink-4)' }}>· {skuAll.length ? `${skuAll.length} แบบ` : `${nSku} แบบ (ใส่รหัสสินค้าก่อน)`}{overrideN ? <span style={{ color: 'var(--accent)' }}> · แก้เอง {overrideN}</span> : ''} · สร้างจากสี×ไซซ์อัตโนมัติ</span>
+                      <span style={{ display: 'inline-flex', color: 'var(--ink-4)', transition: 'transform .15s', transform: skuOpen ? 'rotate(180deg)' : 'none' }}><Icon name="chevD" /></span>
+                    </button>
+                  </CollapsibleTrigger>
+                  {skuAll.length > 0 && <Button variant="outline" size="sm" className="h-7" onClick={() => { try { navigator.clipboard.writeText(skuAll.join('\n')); toast(`คัดลอก ${skuAll.length} รหัสแล้ว`, 'success'); } catch { toast('คัดลอกไม่ได้', 'error'); } }}><Icon name="layers" /> คัดลอกทั้งหมด</Button>}
+                </div>
+                <CollapsibleContent>
+                  <div style={{ padding: '0 14px 14px' }}>
             {(() => {
-              const cs = splitList(edit.colors), ss = splitList(edit.sizes), base = (edit.code || '').trim();
+              const cs = colorList, ss = sizeList, base = (edit.code || '').trim();
               if (!base) return <div className="cap" style={{ color: 'var(--ink-4)' }}>ใส่ <b>รหัสสินค้า</b> ด้านบน เพื่อสร้างรหัสรายสี/ไซซ์อัตโนมัติ</div>;
               const cols = cs.length ? cs : [null], szs = ss.length ? ss : [null];
               const vmap = edit.variants || {};
@@ -520,24 +637,18 @@ export function ShirtCatalogView() {
               const codeOf = (c, s) => { const o = vmap[vkey(c, s)]; return (o != null && o !== '') ? o : formula(c, s); };
               const setCode = (c, s, val) => { const k = vkey(c, s), v = { ...vmap }, def = formula(c, s); const t = val.trim(); if (!t || t === def) delete v[k]; else v[k] = t; setEdit({ ...edit, variants: v }); };
               const resetAll = () => setEdit({ ...edit, variants: {} });
-              const overrideN = Object.keys(vmap).length;
-              const all = []; cols.forEach(c => szs.forEach(s => all.push(codeOf(c, s))));
               return (
                 <div className="fld">
                   <div className="row between" style={{ alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                    <span>ทั้งหมด {all.length} แบบ{overrideN ? <span className="cap" style={{ color: 'var(--accent)' }}> · แก้เอง {overrideN}</span> : ''}</span>
-                    <div className="row" style={{ gap: 6 }}>
-                      {overrideN > 0 && <Button variant="outline" size="sm" onClick={resetAll} title="คืนทุกรหัสเป็นสูตร"><Icon name="refresh" /> รีเซ็ตสูตร</Button>}
-                      <Button variant="outline" size="sm" onClick={() => { try { navigator.clipboard.writeText(all.join('\n')); toast(`คัดลอก ${all.length} รหัสแล้ว`, 'success'); } catch { toast('คัดลอกไม่ได้', 'error'); } }}><Icon name="layers" /> คัดลอก</Button>
-                    </div>
+                    <span className="cap" style={{ color: 'var(--ink-4)' }}>แก้รหัสในช่องได้เลย — ตัวที่แก้มีกรอบสี ตัวที่ไม่แก้ปรับตามรหัส/สี/ไซซ์อัตโนมัติ</span>
+                    {overrideN > 0 && <Button variant="outline" size="sm" className="h-7" onClick={resetAll} title="คืนทุกรหัสเป็นสูตร"><Icon name="refresh" /> รีเซ็ตสูตร</Button>}
                   </div>
-                  <div className="cap" style={{ color: 'var(--ink-4)' }}>แก้รหัสในช่องได้เลย — ตัวที่แก้จะมีกรอบสี ตัวที่ไม่แก้ปรับตามรหัส/สี/ไซซ์ให้อัตโนมัติ</div>
                   <div className="sku-table-wrap">
                     <Table className="sku-table"><TableBody>
                       {cols.map(c => (
                         <TableRow key={c || '_'}>
                           <TableCell className="sku-color">{c ? <><span className="sw" style={{ background: COLOR_HEX[c] || '#bbb' }} />{c} <span className="cap" style={{ color: 'var(--ink-4)' }}>{COLOR_TH2CODE[c] || '?'}</span></> : <span className="cap" style={{ color: 'var(--ink-4)' }}>ไม่ระบุสี</span>}</TableCell>
-                          <TableCell><div className="sku-codes">{szs.map(s => { const ov = vmap[vkey(c, s)] != null && vmap[vkey(c, s)] !== ''; return <input key={s || '_'} className={'sku-input' + (ov ? ' edited' : '')} value={codeOf(c, s)} title={s ? `ไซซ์ ${s}` : ''} onChange={e => setCode(c, s, e.target.value)} />; })}</div></TableCell>
+                          <TableCell><div className="sku-codes">{szs.map(s => { const ov = vmap[vkey(c, s)] != null && vmap[vkey(c, s)] !== ''; return <input key={s || '_'} className={'sku-input' + (ov ? ' edited' : '')} value={codeOf(c, s)} title={s ? `ไซซ์ ${s}` : ''} aria-label={`รหัส ${c || ''} ${s || ''}`} onChange={e => setCode(c, s, e.target.value)} />; })}</div></TableCell>
                         </TableRow>
                       ))}
                     </TableBody></Table>
@@ -545,19 +656,20 @@ export function ShirtCatalogView() {
                 </div>
               );
             })()}
-              </CollapsibleContent>
+                  </div>
+                </CollapsibleContent>
+              </div>
             </Collapsible>
 
             {/* รายละเอียด / โน้ต */}
-            <Separator />
-            <SecHead>รายละเอียด / โน้ต</SecHead>
-            <label className="fld"><Textarea rows={3} value={edit.note} onChange={e => setEdit({ ...edit, note: e.target.value })} placeholder="เนื้อผ้า / รายละเอียดเพิ่มเติม" /></label>
+            <Field label="รายละเอียด / โน้ต"><Textarea aria-label="รายละเอียด / โน้ต" rows={3} value={edit.note} onChange={e => setEdit({ ...edit, note: e.target.value })} placeholder="เนื้อผ้า / รายละเอียดเพิ่มเติม" /></Field>
 
             {/* 10D — ประวัติการแก้ไข (เฉพาะตอนแก้ของเดิม · ซ่อนเงียบถ้ายังไม่มีประวัติ) */}
             {edit.id && <CatalogHistory catalogId={edit.id} />}
           </div>
         </SideSheet>
-      )}
+        );
+      })()}
 
       {/* ---------- ยืนยันลบ ---------- */}
       {delTarget && (

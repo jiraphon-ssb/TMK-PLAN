@@ -23,12 +23,12 @@ const T = {
 
     // ---- Nav ----
     navHome: 'หน้าหลัก', navSales: 'ยอดขาย', navPlanner: 'วางแผน', navFlows: 'โครงการ',
-    navCatalog: 'Sale', navSystem: 'ตั้งค่า', navLogs: 'บันทึกกิจกรรม', subFlowBoard: 'โครงการทั้งหมด', subFlowList: 'รายการงาน', subFlowHistory: 'ประวัติกิจกรรม', subMyTasks: 'งานของฉัน',
+    navCatalog: 'ยอดขาย', navSystem: 'ตั้งค่า', navLogs: 'บันทึกกิจกรรม', subFlowBoard: 'โครงการทั้งหมด', subFlowList: 'รายการงาน', subFlowHistory: 'ประวัติกิจกรรม', subMyTasks: 'งานของฉัน',
     subOverview: 'ภาพรวมยอดขาย', subChannels: 'ช่องทางการขาย',
     subAds: 'โฆษณา & แชท', subCustomers: 'ลูกค้า',
     subDaily: 'บันทึกรายวัน', subMonthly: 'บันทึก & ภาพรวมเดือน', subStatus: 'สถานะการกรอก', subDataHub: 'ส่งยอด & ข้อมูล',
     subCalendar: 'ปฏิทินปฏิบัติงาน', subKanban: 'บอร์ดคุมงาน', subTimeline: 'ไทม์ไลน์แคมเปญ',
-    subCampaigns: 'แคมเปญ', subReport: 'รายงานขาย', subPerf: 'ประสิทธิภาพเซลล์', subOrders: 'ออเดอร์', subEntry: 'บันทึกขาย', subShirts: 'สินค้า', subCrm: 'ภาพรวม CRM', subHealth: 'สุขภาพข้อมูล', subImport: 'ข้อมูล', subCustomers2: 'ลูกค้า', subShopCust: 'ลูกค้าร้าน', subAudit: 'ประวัติการใช้งาน', subRoles: 'สิทธิ์ผู้ใช้', subTrash: 'ถังขยะ',
+    subCampaigns: 'แคมเปญ', subReport: 'รายงานขาย', subPerf: 'ประสิทธิภาพเซลล์', subOrders: 'ออเดอร์', subEntry: 'บันทึกขาย', subShirts: 'สินค้า', subStock: 'สต็อก', subCrm: 'ภาพรวม CRM', subHealth: 'สุขภาพข้อมูล', subImport: 'ข้อมูล', subCustomers2: 'ลูกค้า', subShopCust: 'ลูกค้าร้าน', subAudit: 'ประวัติการใช้งาน', subRoles: 'สิทธิ์ผู้ใช้', subTrash: 'ถังขยะ',
     panelSalesSub: 'ดูตัวเลข บันทึกยอด และตั้งค่า',
     panelPlannerSub: 'งาน แคมเปญ และปฏิทินทีม',
     panelCatalogSub: 'สินค้า แคมเปญ และการผลิต',
@@ -258,11 +258,11 @@ const T = {
 
     // ---- Nav ----
     navHome: 'Home', navSales: 'Sales', navPlanner: 'Planner', navFlows: 'Projects', subFlowBoard: 'All Projects', subFlowList: 'Task List', subFlowHistory: 'Activity', subMyTasks: 'My Tasks',
-    navCatalog: 'Sale', navSystem: 'Settings', navLogs: 'Activity Log', subOverview: 'Sales Overview', subChannels: 'Sales Channels',
+    navCatalog: 'Sales', navSystem: 'Settings', navLogs: 'Activity Log', subOverview: 'Sales Overview', subChannels: 'Sales Channels',
     subAds: 'Ads & Chat', subCustomers: 'Customers',
     subDaily: 'Daily Entry', subMonthly: 'Daily & Monthly', subStatus: 'Entry Status', subDataHub: 'Sales & data',
     subCalendar: 'Calendar', subKanban: 'Kanban Board', subTimeline: 'Timeline',
-    subCampaigns: 'Campaigns', subReport: 'Sales report', subPerf: 'Performance', subOrders: 'Orders', subEntry: 'Sale entry', subShirts: 'Products', subCrm: 'CRM Overview', subHealth: 'Data health', subImport: 'Data', subCustomers2: 'Customers', subShopCust: 'Shop customers', subAudit: 'Activity Log', subRoles: 'User Roles', subTrash: 'Trash',
+    subCampaigns: 'Campaigns', subReport: 'Sales report', subPerf: 'Performance', subOrders: 'Orders', subEntry: 'Sale entry', subShirts: 'Products', subStock: 'Stock', subCrm: 'CRM Overview', subHealth: 'Data health', subImport: 'Data', subCustomers2: 'Customers', subShopCust: 'Shop customers', subAudit: 'Activity Log', subRoles: 'User Roles', subTrash: 'Trash',
     panelSalesSub: 'View metrics, record sales & configure',
     panelPlannerSub: 'Tasks, campaigns & team calendar',
     panelCatalogSub: 'Products, campaigns & manufacturing',

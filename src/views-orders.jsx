@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { B, N, Icon, PersonAvatar, Skel, useDelayedFlag } from './components.jsx';
 import { channelColor } from './charts.jsx';
 import { makeSkuResolver, loadResolverMaps } from './lib/designResolve.js';
@@ -17,7 +17,7 @@ import { useRenderCount } from './realtime/useRenderCount.js';
 import { isAdmin, orderVisibleTo } from './lib/roleAccess.js';
 import { PRESETS, presetRange } from './lib/saleTime.js';
 import { logAudit } from './lib/audit.js';
-import { todayISO } from './lib/dateUtils.js';
+import { todayISO, THAI_MONTHS } from './lib/dateUtils.js';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -129,7 +129,8 @@ function MpOrdersView() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const canEdit = appCanEdit();
   const [density] = usePersistedState('tmk-orders-density', 'cozy');
-  const [hiddenCols, setHiddenCols] = usePersistedState('tmk-orders-hiddenCols', []);
+  // default ซ่อน วันที่/งาน/สถานะ/หมายเหตุ (รื้อ UI 22 ส.ค.: 3 คอลัมน์นี้ว่าง "—" เกือบทุกแถว · วันที่ไปอยู่แถวคั่นวัน) — เปิดคืนได้จาก "คอลัมน์" · key ใหม่ไม่ทับค่าที่ user เคยตั้ง
+  const [hiddenCols, setHiddenCols] = usePersistedState('tmk-orders-hiddenCols-v2', ['date', 'job', 'status', 'note']);
   const colVisible = useMemo(() => new Set(ORDERS_COLS.map(c => c.key).filter(k => !hiddenCols.includes(k))), [hiddenCols]);
   const toggleCol = (k) => setHiddenCols(hc => hc.includes(k) ? hc.filter(x => x !== k) : [...hc, k]);
 
@@ -279,6 +280,14 @@ function MpOrdersView() {
   const totalPages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
   const pageClamped = Math.min(page, totalPages);
   const pageRows = sorted.slice((pageClamped - 1) * PER_PAGE, pageClamped * PER_PAGE);
+  // สรุปช่วง/ตัวกรอง (ไม่นับใบยกเลิก) + ยอดต่อวันสำหรับแถวคั่นวัน (เมื่อเรียงตามวันที่)
+  const live = filtered.filter(o => o.status !== 'cancelled');
+  const sumSales = live.reduce((a, o) => a + (Number(o.sales) || 0), 0);
+  const byDate = {}; live.forEach(o => { const d = o.order_date || o.order_month || ''; const g = byDate[d] || (byDate[d] = { n: 0, sales: 0 }); g.n += 1; g.sales += Number(o.sales) || 0; });
+  const groupByDate = sortKey === 'date';
+  const showDateCol = colVisible.has('date') || !groupByDate;   // ไม่ได้เรียงตามวัน → ต้องเห็นวันที่ในแถว
+  const fmtD = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${Number(m[3])} ${THAI_MONTHS[Number(m[2]) - 1]} ${String(Number(m[1]) + 543).slice(2)}` : (iso || '—'); };
+  const nCols = 2 + (canEdit ? 1 : 0) + ['channel', 'customer', 'designs', 'job', 'payment', 'status', 'note', 'qty'].filter(k => colVisible.has(k)).length + (showDateCol ? 1 : 0);
   // เลือกทั้งหน้า (checkbox หัวตาราง) + สรุปสิ่งที่เลือกไว้ (เพื่อโชว์ปุ่ม action ที่เกี่ยวข้อง)
   const pageNos = pageRows.map(o => o.order_no);
   const allOnPage = pageNos.length > 0 && pageNos.every(no => selSet.has(no));
@@ -292,7 +301,7 @@ function MpOrdersView() {
   // ไม่มีข้อมูลเลยทั้งระบบ (ไม่มีเดือนใดเลย) → แนะนำนำเข้า · ถ้าแค่เดือนนี้ว่าง ยังให้เลือกเดือนอื่นได้
   if (err || (orders.length === 0 && !bounds.max)) return (
     <div className="content-inner rise"><Card className="p-[22px]"><div className="cap" style={{ textAlign: 'center', padding: 24, color: 'var(--ink-4)' }}>
-      {/relation .* does not exist|tmk_mp_/i.test(err) ? 'ยังไม่ได้สร้างตาราง — รัน migration ก่อน' : 'ยังไม่มีออเดอร์ — ส่งยอดใบเสร็จหรือนำเข้าไฟล์มาร์เก็ตเพลสได้ที่เมนู "ส่งยอด & ข้อมูล"'}
+      {/relation .* does not exist|tmk_mp_/i.test(err) ? 'ยังไม่ได้สร้างตาราง — รัน migration ก่อน' : 'ยังไม่มีออเดอร์ — ส่งใบเสร็จได้ที่ปุ่ม "ส่งยอด" ในหน้าประสิทธิภาพเซลล์'}
     </div></Card></div>
   );
 
@@ -312,14 +321,14 @@ function MpOrdersView() {
         {/* หัว + เครื่องมือ แถวเดียว: ชื่อ · ช่วงวัน · ตัวกรอง · ล้าง | (ขวา) ค้นหา · คอลัมน์ · เพิ่มออเดอร์ */}
         <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="m-0 mr-1 text-base font-bold leading-tight" style={{ color: 'var(--ink)' }}>ออเดอร์</h3>
+            <h3 className="m-0 mr-1 text-base font-bold leading-tight" style={{ color: 'var(--ink)' }}>ออเดอร์ <span className="dim num" style={{ fontWeight: 500 }}>· {N(live.length)} · {B(sumSales)}</span></h3>
             {!canSeeAll && <Badge variant="outline" className="gap-1 text-[11px] text-muted-foreground"><Icon name="user" className="size-3" />เฉพาะของฉัน</Badge>}
             <DateRangePicker from={range.from} to={range.to} min={bounds.min} max={bounds.max}
               onChange={(a, b) => setRange({ from: a, to: b })} presets={PRESETS} activePreset={activePreset} onPickPreset={pickPreset} />
             <CollapsibleTrigger asChild>
               <Button variant="outline" size="sm" className="gap-2 rounded-full">
                 <Icon name="filter" /> ตัวกรอง{nFilters > 0 && <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">{nFilters}</Badge>}
-                <Icon name={filtersOpen ? 'up' : 'down'} />
+                <Icon name="chevD" style={filtersOpen ? { transform: 'rotate(180deg)' } : undefined} />
               </Button>
             </CollapsibleTrigger>
             {nFilters > 0 && <Button variant="ghost" size="sm" className="text-[var(--bad)]" onClick={clearFilters}><Icon name="x" /> ล้าง</Button>}
@@ -361,7 +370,7 @@ function MpOrdersView() {
           <TableHeader><TableRow>
             {canEdit && <TableHead className="w-9 cell-hide-m"><ShadcnCheckbox checked={allOnPage} onCheckedChange={toggleAllPage} aria-label="เลือกทั้งหน้า" /></TableHead>}
             <SortHead field="order_no" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}>ออเดอร์</SortHead>
-            {colVisible.has('date') && <SortHead field="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}>วันที่</SortHead>}
+            {showDateCol && <SortHead field="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}>วันที่</SortHead>}
             {colVisible.has('channel') && <SortHead field="channel" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}>ช่องทาง</SortHead>}
             {colVisible.has('customer') && <SortHead field="customer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}>ลูกค้า</SortHead>}
             {colVisible.has('designs') && <TableHead>ลายเสื้อ</TableHead>}
@@ -372,33 +381,40 @@ function MpOrdersView() {
             {colVisible.has('qty') && <SortHead field="qty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right">ตัว</SortHead>}
             <SortHead field="sales" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right">ยอดขาย</SortHead>
           </TableRow></TableHeader>
-          <TableBody>{pageRows.map(o => { const designs = buildDesigns(skusByOrder[o.order_no] || []);
-            return (
-              <TableRow key={o.order_no} data-state={selSet.has(o.order_no) ? 'selected' : undefined} className={`mp-order-row ${openId === o.order_no ? 'is-open' : ''} ${o.status === 'cancelled' ? 'opacity-55' : ''}`} onClick={() => setOpenId(o.order_no)} style={{ cursor: 'pointer' }}>
+          <TableBody>{pageRows.map((o, idx) => { const designs = buildDesigns(skusByOrder[o.order_no] || []);
+            const d = o.order_date || o.order_month || '';
+            const prevD = idx > 0 ? (pageRows[idx - 1].order_date || pageRows[idx - 1].order_month || '') : null;
+            const divider = groupByDate && d !== prevD ? (
+              <TableRow key={'d:' + d} className="order-date-row" aria-hidden={false}>
+                <TableCell colSpan={nCols} className="cap cell-title"><span className="row" style={{ gap: 8, alignItems: 'baseline' }}><b style={{ color: 'var(--ink-2)', fontWeight: 700, fontSize: 12.5 }}>{fmtD(d)}</b><span className="num" style={{ color: 'var(--ink-4)' }}>{N(byDate[d]?.n || 0)} ออเดอร์ · {B(byDate[d]?.sales || 0)}</span></span></TableCell>
+              </TableRow>
+            ) : null;
+            return (<Fragment key={o.order_no}>{divider}
+              <TableRow data-state={selSet.has(o.order_no) ? 'selected' : undefined} className={`mp-order-row ${openId === o.order_no ? 'is-open' : ''} ${o.status === 'cancelled' ? 'opacity-55' : ''}`} onClick={() => setOpenId(o.order_no)} style={{ cursor: 'pointer' }}>
                 {canEdit && <TableCell className="cell-hide-m" onClick={e => e.stopPropagation()}><ShadcnCheckbox checked={selSet.has(o.order_no)} onCheckedChange={() => toggleSel(o.order_no)} aria-label={`เลือก ${o.order_no}`} /></TableCell>}
-                <TableCell className="cell-title"><span style={{ fontWeight: 600, textDecoration: o.status === 'cancelled' ? 'line-through' : 'none' }}>{o.order_no}</span></TableCell>
-                {colVisible.has('date') && <TableCell className="cap" style={{ whiteSpace: 'nowrap' }}>{o.order_date || o.order_month}</TableCell>}
-                {colVisible.has('channel') && <TableCell><span className="order-channel-chip"><span className="order-channel-dot" style={{ background: channelColor(o.channel) }} />{o.channel}</span></TableCell>}
-                {colVisible.has('customer') && <TableCell><div className="flex items-center gap-2 min-w-0">{o.customer_name && <PersonAvatar name={o.customer_name} color={channelColor(o.channel)} size={22} className="shrink-0" />}<div className="min-w-0">{o.customer_name || o.customer_code || '—'}{o.province && <div className="cap">{o.province}</div>}{!o.customer_name && !o.customer_code && <Badge variant="warning" className="rounded-full text-[10px] font-medium">ไม่มีลูกค้า</Badge>}</div></div></TableCell>}
+                <TableCell className="cell-title"><span className="row" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ fontWeight: 600, textDecoration: o.status === 'cancelled' ? 'line-through' : 'none' }}>{o.order_no}</span>{o.status === 'cancelled' && <span className="chip chip-cancelled">ยกเลิก</span>}{!colVisible.has('job') && o.job_type && o.job_type !== 'ปลีก' && <span className={'chip ' + jobChip(o.job_type)} title="ประเภทงาน">{o.job_type}</span>}</span></TableCell>
+                {showDateCol && <TableCell className="cap num" style={{ whiteSpace: 'nowrap' }}>{fmtD(o.order_date || o.order_month)}</TableCell>}
+                {colVisible.has('channel') && <TableCell><span className="row" style={{ gap: 7, alignItems: 'center', whiteSpace: 'nowrap', fontSize: 12.5, fontWeight: 600 }}><span className="order-channel-dot" style={{ background: channelColor(o.channel) }} />{o.channel}</span></TableCell>}
+                {colVisible.has('customer') && <TableCell><div className="flex items-center gap-2 min-w-0">{o.customer_name && <PersonAvatar name={o.customer_name} color={channelColor(o.channel)} size={22} className="shrink-0" />}<div className="min-w-0">{o.customer_name || o.customer_code || '—'}{o.province && <div className="cap">{o.province}</div>}{!o.customer_name && !o.customer_code && <Badge variant="warning" className="rounded-full text-[10px] font-medium">ไม่มีลูกค้า</Badge>}</div>{!colVisible.has('note') && o.note && <span className="shrink-0 inline-flex" style={{ color: 'var(--warn)' }} title={`หมายเหตุ: ${o.note}`} role="img" aria-label={`หมายเหตุ: ${o.note}`}><Icon name="chat" /></span>}</div></TableCell>}
                 {colVisible.has('designs') && <TableCell className="cell-hide-m">{designs.length === 0 ? <span className="cap" style={{ color: 'var(--ink-4)' }}>—</span> : <span style={{ fontWeight: 600 }}>{designs.slice(0, 2).map(d => d.design).join(', ')}{designs.length > 2 ? ` +${designs.length - 2}` : ''}</span>}</TableCell>}
                 {colVisible.has('job') && <TableCell>{(o.job_type && o.job_type !== 'ปลีก') ? <span className={'chip ' + jobChip(o.job_type)}>{o.job_type}</span> : <span className="cap">ปลีก</span>}</TableCell>}
                 {colVisible.has('payment') && <TableCell><span className="cap" style={o.payment_type ? undefined : { color: 'var(--ink-4)' }}>{o.payment_type || '—'}</span></TableCell>}
                 {colVisible.has('status') && <TableCell>{o.status && !['completed', 'active'].includes(o.status) ? <span className={'chip ' + statusChip(o.status)}>{statusLabel(o.status)}</span> : <span className="cap" style={{ color: 'var(--ink-4)' }}>—</span>}</TableCell>}
                 {colVisible.has('note') && <TableCell className="cell-hide-m">{o.note ? <span className="block max-w-[160px] truncate text-[13px]" title={o.note}>{o.note}</span> : <span className="cap" style={{ color: 'var(--ink-4)' }}>—</span>}</TableCell>}
                 {colVisible.has('qty') && <TableCell className="num" style={{ textAlign: 'right' }}>{N(o.qty)}</TableCell>}
-                <TableCell className="num" style={{ textAlign: 'right', fontWeight: 700 }}><span className="row" style={{ gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>{B(o.sales)}<Icon name="arrowR" /></span></TableCell>
+                <TableCell className="num" style={{ textAlign: 'right', fontWeight: 700 }}>{B(o.sales)}</TableCell>
               </TableRow>
-          ); })}</TableBody>
+            </Fragment>); })}</TableBody>
         </Table></CardTable>
         {filtered.length > PER_PAGE && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="cap" style={{ color: 'var(--ink-4)' }}>แสดง {N((pageClamped - 1) * PER_PAGE + 1)}–{N(Math.min(pageClamped * PER_PAGE, filtered.length))} จาก {N(filtered.length)} ออเดอร์</span>
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}><Icon name="left" /> ก่อนหน้า</Button>
+              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}><Icon name="chevL" /> ก่อนหน้า</Button>
               {_pageList(pageClamped, totalPages).map((p, i) => p === '…'
                 ? <span key={'e' + i} className="px-1.5 text-[var(--ink-4)]">…</span>
                 : <Button key={p} variant={p === pageClamped ? 'default' : 'outline'} size="sm" className="min-w-9 px-0" onClick={() => setPage(p)}>{p}</Button>)}
-              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>ถัดไป <Icon name="right" /></Button>
+              <Button variant="outline" size="sm" className="gap-1" disabled={pageClamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>ถัดไป <Icon name="chevR" /></Button>
             </div>
           </div>
         )}

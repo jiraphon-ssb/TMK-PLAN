@@ -83,16 +83,26 @@ export async function deleteRow(table, id, label, audit = null) {
 
 export const MD = TMK;
 
-// เปิด/ปิดแบบมีอนิเมชัน: คุม open เอง + หน่วง onClose ~200ms ให้ Radix เล่น exit ก่อน unmount
+// เปิด/ปิดแบบมีอนิเมชัน: คุม open เอง แล้ว unmount "เมื่อ exit animation จบจริง" (animationend)
+// BUGFIX 22 ส.ค. — popup กระพริบตอนปิด: เดิม unmount ด้วย setTimeout(delay) อย่างเดียว ซึ่งยาวกว่า animation (190/420ms)
+// พอ animation จบ element เด้งกลับ opacity 1 (tailwindcss-animate ไม่ตั้ง fill-mode) → เห็น popup โผล่เต็มอีกแวบก่อนหาย
+// ถ้าเบราว์เซอร์ throttle timer (แท็บไม่ active/เครื่องหน่วง) ช่องว่างยืดเป็นวินาที → กระพริบชัด · เกิดกับทุก popup
+// แก้ 2 ชั้น: (1) CSS ตรึง state ปลายด้วย fill-mode: forwards (index.css/sheet/dialog/alert)
+//            (2) ที่นี่ — ผูก animationend ของ content แล้วปิดทันที · timeout เหลือเป็น fallback (reduced-motion/ไม่มี animation)
 function useAnimatedClose(onClose, confirmOnClose, delay = 200) {
   const [open, setOpen] = useState(true);
+  const nodeRef = useRef(null);
   const closing = useRef(false);
   const asking = useRef(false);
+  const done = useRef(false);
   const doClose = () => {
     if (closing.current) return;
     closing.current = true;
     setOpen(false);
-    setTimeout(() => onClose && onClose(), delay);
+    const finish = () => { if (done.current) return; done.current = true; onClose && onClose(); };
+    const el = nodeRef.current;
+    if (el) el.addEventListener('animationend', (e) => { if (e.target === el) finish(); }, { once: true });
+    setTimeout(finish, delay);   // fallback: ไม่มี animation / animationend ไม่ยิง
   };
   const onOpenChange = (o) => {
     if (o) return;
@@ -106,7 +116,7 @@ function useAnimatedClose(onClose, confirmOnClose, delay = 200) {
     }
     doClose();
   };
-  return { open, onOpenChange };
+  return { open, onOpenChange, nodeRef };
 }
 
 /* ---------- Modal shell (Radix Dialog — ประกอบกับ Radix Select/Dropdown ได้ถูกต้อง) ---------- */
@@ -116,12 +126,12 @@ export function Modal({ icon, title, sub, onClose, footer, wide, xl, children, c
     const t = e?.detail?.originalEvent?.target;
     if (t && t.closest && t.closest('[role="alertdialog"],[data-radix-popper-content-wrapper],[data-sonner-toast],[data-radix-toast-viewport]')) e.preventDefault();
   };
-  const { open, onOpenChange } = useAnimatedClose(onClose, confirmOnClose);
+  const { open, onOpenChange, nodeRef } = useAnimatedClose(onClose, confirmOnClose);
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal forceMount>
         <RDialog.Overlay className="dialog-overlay" forceMount />
-        <RDialog.Content className={'dialog-content' + (xl ? ' dialog-content-xl' : wide ? ' dialog-content-lg' : '')} aria-describedby={undefined} forceMount
+        <RDialog.Content ref={nodeRef} className={'dialog-content' + (xl ? ' dialog-content-xl' : wide ? ' dialog-content-lg' : '')} aria-describedby={undefined} forceMount
           onPointerDownOutside={guardOutside} onInteractOutside={guardOutside}>
           {hideHeader ? (
             <>
@@ -154,10 +164,10 @@ const SIDE_SHEET_W = {
   xl: 'w-full sm:w-[760px] sm:max-w-[760px]',
 };
 export function SideSheet({ icon, title, sub, onClose, footer, size = 'md', children, confirmOnClose, showCloseButton = true, position = 'right' }) {
-  const { open, onOpenChange } = useAnimatedClose(onClose, confirmOnClose, 430);
+  const { open, onOpenChange, nodeRef } = useAnimatedClose(onClose, confirmOnClose, 430);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side={position === 'left' ? 'left' : 'right'} hideClose
+      <SheetContent ref={nodeRef} side={position === 'left' ? 'left' : 'right'} hideClose
         aria-describedby={undefined}
         className={`${SIDE_SHEET_W[size] || SIDE_SHEET_W.md} p-0 gap-0 flex flex-col overflow-hidden`}>
         <div className="side-sheet-head">

@@ -452,8 +452,12 @@ export async function attachReceiptFiles(entries, { onProgress } = {}) {
 export function canEditReceipt(receipt, { email, isAdmin }) {
   if (isAdmin) return true;
   if ((receipt.uploader_email || '') !== (email || '')) return false;
-  const d = String(receipt.created_at || '').slice(0, 10);
-  return d === new Date().toISOString().slice(0, 10);
+  /* "ภายในวันเดียวกัน" ต้องเป็นวันปฏิทินไทย ไม่ใช่วัน UTC
+     เดิมเทียบ UTC ทั้งคู่ = หน้าต่าง 07:00→07:00 → ใบที่ส่งก่อน 7 โมงเช้าแก้ไม่ได้ทั้งวันนั้น */
+  const local = (iso) => { const t = new Date(iso); return Number.isNaN(t.getTime()) ? '' : `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+  const d = local(receipt.created_at);
+  const now = new Date();
+  return !!d && d === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 /* ============================================================

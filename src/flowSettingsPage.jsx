@@ -8,7 +8,7 @@ import { TMK } from './data.js';
 import { Icon, Avatar, ColorPicker, FlowIcon, IconPicker, readImageCompressed } from './components.jsx';
 import { useData } from './dataContext.jsx';
 import { supabase } from './lib/supabaseClient.js';
-import { toast, openModal, goSection, userEmail } from './lib/appBus.js';
+import { toast, openModal, goSection, userEmail, confirm } from './lib/appBus.js';
 import { logAudit } from './lib/audit.js';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +58,8 @@ export function FlowSettingsPage({ flow, onAfter, onGone }) {
   const [brandIds, setBrandIds] = useState(flow.brandIds && flow.brandIds.length ? flow.brandIds : (flow.brandId ? [flow.brandId] : []));
   const [campaignIds, setCampaignIds] = useState(flow.campaignIds || []);
   const [statuses, setStatuses] = useState((flow.statuses && flow.statuses.length) ? flow.statuses : defaultStatuses());
+  // งานที่ต้องย้ายเมื่อกด "บันทึก" (จากการลบคอลัมน์สถานะ) — ยังไม่แตะ DB จนกว่าจะเซฟจริง
+  const [pendingMoves, setPendingMoves] = useState([]);
   const [members, setMembers] = useState(flow.members || []);
   const [visibility, setVisibility] = useState(flow.visibility || 'shared');
   const [defaultView, setDefaultView] = useState(flow.defaultView || 'kanban');
@@ -90,6 +92,15 @@ export function FlowSettingsPage({ flow, onAfter, onGone }) {
       }
       if (error) { if (isMissing(error)) throw new Error('ยังไม่ได้รัน migration — รัน 20260710-flows-brands.sql ก่อน'); throw error; }
       logAudit({ action: 'update', entityType: 'flow', entityName: name.trim(), summary: `แก้ไขโครงการ "${name.trim()}"`, flowId: flow.scopeId ?? flow.id });
+      /* ย้ายงานของคอลัมน์ที่ถูกลบ — ทำหลังบันทึกโครงการสำเร็จเท่านั้น
+         (ถ้าทำตอนกดลบคอลัมน์ แล้วผู้ใช้ออกก่อนบันทึก งานจะถูกย้ายทั้งที่คอลัมน์ยังอยู่ = กู้ไม่ได้) */
+      for (const pm of pendingMoves) {
+        if (!pm.ids?.length) continue;
+        const { error: mvErr } = await supabase.from('tmk_tasks').update({ status: pm.to }).in('id', pm.ids);
+        if (mvErr) { toast(`บันทึกโครงการแล้ว แต่ย้าย ${pm.n} งานไปคอลัมน์ "${pm.label}" ไม่สำเร็จ: ${mvErr.message || ''}`, 'error'); continue; }
+        logAudit({ action: 'update', entityType: 'task', entityName: `${pm.n} งาน`, summary: `ลบคอลัมน์สถานะ — ย้าย ${pm.n} งานไปคอลัมน์ "${pm.label}"`, flowId: flow.scopeId ?? flow.id });
+      }
+      if (pendingMoves.length) { setPendingMoves([]); if (refresh) await refresh(['tmk_tasks']); }
       // แจ้งสมาชิกที่ถูกเพิ่มใหม่เข้าโครงการ (diff เก่า/ใหม่)
       const _added = members.filter(m => !(flow.members || []).includes(m));
       if (refresh) await refresh(['tmk_flows']); else if (reload) await reload();
@@ -146,8 +157,49 @@ export function FlowSettingsPage({ flow, onAfter, onGone }) {
   // ตัวแก้คอลัมน์สถานะ
   const setStatus = (i, patch) => setStatuses(st => st.map((s, j) => j === i ? { ...s, ...patch } : s));
   const addStatus = () => setStatuses(st => [...st, { id: 'st_' + Math.random().toString(36).slice(2, 7), label: 'สถานะใหม่', color: PALETTE[st.length % PALETTE.length], done: false }]);
-  const removeStatus = (i) => setStatuses(st => st.length > 1 ? st.filter((_, j) => j !== i) : st);
+  /* ⚠️ ลบคอลัมน์สถานะ = งานที่อยู่ในคอลัมน์นั้น "หายจากทุกวิว"
+     Kanban/รายการ/ไทม์ไลน์ เรนเดอร์จาก cols.map() แล้ว filter(t => t.status === col.id)
+     → ไม่มี bucket ให้ status ที่ไม่รู้จัก · งานยังอยู่ใน DB แต่ไม่มีทางเห็นจาก UI (นอกจาก "งานของฉัน")
+     จึงต้องนับก่อนว่ามีงานค้างกี่ใบ แล้วให้ผู้ใช้ตัดสิน — ย้ายไปคอลัมน์แรก หรือยกเลิก */
+  const removeStatus = async (i) => {
+    if (statuses.length <= 1) return;
+    const col = statuses[i];
+    const fid = flow.scopeId ?? flow.id ?? '';
+    // ฟิลด์ที่ผูกงานกับโครงการคือ t.flow (ดู views-flows.jsx:79,90) ไม่ใช่ flowId/flow_id
+    const stuck = (TMK.tasks || []).filter(t => !t.deletedAt && (t.flow || '') === (fid || '') && t.status === col.id);
+    if (stuck.length) {
+      const to = statuses.find((_, j) => j !== i);
+      const ok = await confirm({
+        title: `ลบคอลัมน์ "${col.label}"`,
+        body: `มีงานอยู่ในคอลัมน์นี้ ${stuck.length} งาน
+
+ถ้าลบไปเลย งานเหล่านี้จะหายจากบอร์ด/รายการ/ไทม์ไลน์ (ยังอยู่ในฐานข้อมูล แต่เปิดดูจาก UI ไม่ได้)
+
+กด "ย้ายแล้วลบ" เพื่อย้ายงานทั้งหมดไปคอลัมน์ "${to?.label || '-'}" ก่อน`,
+        danger: true, confirmText: 'ย้ายแล้วลบ',
+      });
+      if (!ok) return;
+      /* ⚠️ ห้ามย้ายงานลง DB ตอนนี้ — การลบคอลัมน์เป็นแค่ state ที่ยังไม่ได้เซฟ
+         ถ้าย้ายทันทีแล้วผู้ใช้กด "กลับบอร์ด" → คอลัมน์ยังอยู่ แต่งานถูกย้ายไปแล้วและกู้ไม่ได้
+         → จดไว้เป็น "งานค้างทำ" แล้วค่อยลงมือใน save() หลังบันทึกโครงการสำเร็จ */
+      setPendingMoves(pm => [...pm.filter(x => x.to !== col.id), { from: col.id, to: to.id, ids: stuck.map(t => t.id), label: to.label, n: stuck.length }]);
+    }
+    setStatuses(st => st.length > 1 ? st.filter((_, j) => j !== i) : st);
+  };
   const moveStatus = (i, dir) => setStatuses(st => { const j = i + dir; if (j < 0 || j >= st.length) return st; const c = [...st]; [c[i], c[j]] = [c[j], c[i]]; return c; });
+
+  // มีการแก้ที่ยังไม่บันทึกไหม — เดิมกด "กลับบอร์ด" แล้วค่าที่แก้หายเงียบ ไม่มีอะไรเตือน
+  const dirty = JSON.stringify({ name, color, icon, description, coverUrl, brandIds, campaignIds, statuses, members, visibility, defaultView, barColorSource })
+    !== JSON.stringify({
+      name: flow.name || '', color: flow.color || PALETTE[0], icon: flow.icon || 'ClipboardList', description: flow.description || '',
+      coverUrl: flow.coverUrl || '', brandIds: (flow.brandIds && flow.brandIds.length ? flow.brandIds : (flow.brandId ? [flow.brandId] : [])),
+      campaignIds: flow.campaignIds || [], statuses: (flow.statuses && flow.statuses.length) ? flow.statuses : defaultStatuses(),
+      members: flow.members || [], visibility: flow.visibility || 'shared', defaultView: flow.defaultView || 'kanban', barColorSource: flow.barColorSource || 'campaign',
+    });
+  const leave = async () => {
+    if (dirty && !(await confirmAsync({ title: 'ออกโดยไม่บันทึก?', body: 'มีการแก้ไขที่ยังไม่ได้บันทึก — ออกแล้วค่าที่แก้จะหาย', danger: true, confirmText: 'ออกเลย' }))) return;
+    onAfter?.(active_view_fallback(flow));
+  };
 
   const TABS = [
     ['general', 'system', 'ทั่วไป'], ['brand', 'store', 'แบรนด์'], ['camp', 'megaphone', 'แคมเปญ'],
@@ -167,8 +219,9 @@ export function FlowSettingsPage({ flow, onAfter, onGone }) {
         </div>
         {/* ปุ่มบันทึก/กลับ — ย้ายมาไว้หัวมุมขวา (เลิกใช้แถบ sticky ล่างที่ทับเนื้อหา) */}
         <div className="flex items-center gap-2 shrink-0 ml-auto">
-          <Button variant="outline" size="sm" onClick={() => onAfter?.(active_view_fallback(flow))} disabled={busy}>กลับบอร์ด</Button>
-          <Button size="sm" onClick={save} disabled={!name.trim() || busy}>{busy ? 'กำลังบันทึก…' : 'บันทึกการตั้งค่า'}</Button>
+          {dirty && <span className="text-[11.5px] font-medium hidden sm:inline" style={{ color: 'var(--warn)' }}>ยังไม่ได้บันทึก</span>}
+          <Button variant="outline" size="sm" onClick={leave} disabled={busy}>กลับบอร์ด</Button>
+          <Button size="sm" onClick={save} disabled={!name.trim() || busy || !dirty}>{busy ? 'กำลังบันทึก…' : dirty ? 'บันทึกการตั้งค่า' : 'บันทึกแล้ว'}</Button>
         </div>
       </div>
 

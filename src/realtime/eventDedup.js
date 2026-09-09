@@ -4,6 +4,7 @@
    กัน duplicate event ทำ state ผิด (§1: "Duplicate event ที่ทำให้ state ผิด = 0")
    bounded LRU (max) + TTL — ไม่เก็บไม่จำกัด (§11.2: 5,000–20,000 ids · TTL 10–30 นาที)
    pure/injectable now() → unit-test ได้ (§28 Unit: event dedup)
+   ⚠️ ยังไม่ wire — primitive ของ REALTIME-C2-PLAN (ดู src/realtime/README.md) · อย่าลบเพราะ "ไม่มีใคร import"
    ============================================================ */
 
 /**

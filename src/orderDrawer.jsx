@@ -5,6 +5,7 @@
    ============================================================ */
 import { useState, useEffect, useRef } from 'react';
 import { B, N, Icon } from './components.jsx';
+import { THAI_MONTHS } from './lib/dateUtils.js';
 import { SideSheet } from './modals-core.jsx';
 import { channelColor } from './charts.jsx';
 import { skuOverrideKey } from './lib/designResolve.js';
@@ -25,7 +26,8 @@ import { DrawerField, DrawerGroup, MoneyCard, ReceiptPdfModal, _pageList } from 
 import { MoneySummaryRows, payLabel } from './orderCard.jsx';
 import { OrderForm, skuToLine, sumLines, lineAmount } from './orderForm.jsx';
 
-const custCodeShow = (code, name) => { const c = String(code || '').replace(/^[PSN]/, '').trim(); return c && c !== String(name || '').trim() ? c : ''; };
+const custCodeShow = (code, name, phone) => { const c = String(code || '').replace(/^[PSN]/, '').trim(); return c && c !== String(name || '').trim() && c !== String(phone || '').trim() ? c : ''; };   // ซ่อนรหัสถ้าซ้ำชื่อ/เบอร์ (เดิมโชว์เบอร์ 2 ที่)
+const fmtD = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${Number(m[3])} ${THAI_MONTHS[Number(m[2]) - 1]} ${String(Number(m[1]) + 543).slice(2)}` : (iso || '—'); };
 // label ฟิลด์ในฟอร์มแก้ = จางเล็ก 11px (หัวข้อกลุ่ม FormSection เด่นกว่า — ลำดับชั้นถูกทาง · PART 81.5)
 export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], onClose, onSaved, onChanged }) {
   const designs = buildDesigns(sk);
@@ -123,6 +125,7 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
   // บันทึก: อัปเดตตรงที่ tmk_mp_orders (มีผลทุกรายงานทันที) + override field ที่รองรับ (ประกันข้าม reimport)
   // + ใบเสร็จ: sync แถว tmk_sale_receipts ให้ feed ส่งยอดตรงกัน
   const saveOrder = async () => {
+    if (Number(edit?.total) < 0) { toast('ยอดขายต้องไม่ติดลบ', 'error'); return; }
     if (!appCanEdit()) { toast('บัญชีนี้เป็นสิทธิ์ "ดูอย่างเดียว"', 'warn'); return; }
     setBusy(true);
     try {
@@ -209,7 +212,12 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
           const fullCode = l.mode === 'manual' ? baseCode : (buildLineSku(baseCode, l.color, l.size) || baseCode);
           // B1: บรรทัดที่ไม่ถูกแตะจำนวน/ราคา → line_sales เดิมเป๊ะ (ไม่ให้ปัดเศษทำยอดขยับ) · B4: raw ใช้ชื่อเต็ม ลาย(สี-ไซซ์)
           const row = { design: (l.design || '').trim(), product_code: fullCode, color: l.color || '', size: l.size || '', qty: Number(l.qty) || 0, line_sales: lineAmount(l) };
-          if (l.id) await supabase.from('tmk_mp_skus').update(row).eq('id', l.id);
+          /* ⚠️ ต้องอัปเดต order_date/order_month ของบรรทัดขายด้วย
+             เดิมอัปเดตแค่ลาย/สี/ไซซ์/จำนวน/ยอด → แก้วันที่ออเดอร์แล้วบรรทัดขายยังค้างวันเดิม
+             ผลคือ (ก) สต็อกไม่หักในเดือนใหม่ (balanceFromMoves ดูจาก sku.order_date)
+                   (ข) ออเดอร์ใบเดียวแตกเป็น 2 วัน (บรรทัดเก่าวันเดิม + บรรทัดใหม่วันใหม่)
+             บรรทัด INSERT ด้านล่างใส่ครบอยู่แล้ว — ขาดเฉพาะทาง UPDATE */
+          if (l.id) await supabase.from('tmk_mp_skus').update({ ...row, order_date: patch.order_date, order_month: patch.order_month }).eq('id', l.id);
           else await supabase.from('tmk_mp_skus').insert({ id: `${o.source || 'manual'}:${o.order_no}:edit:${Date.now()}:${i}`, order_no: o.order_no, source: o.source || '', channel: patch.channel, order_month: patch.order_month, order_date: patch.order_date, raw_sku_or_name: lineDisplayName(row.design, row.color, row.size) || row.design, match_how: 'manual', ...row });
           // เปลี่ยนลาย/รหัส → override กันหายตอน reimport (เฉพาะบรรทัดเดิมที่มี raw)
           if (l.id && l.raw && (row.design !== l._design0 || fullCode !== l._code0)) {
@@ -343,7 +351,12 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
     setBusy(true);
     try {
       await supabase.from('tmk_mp_skus').delete().eq('source', o.source || '').eq('order_no', o.order_no);
-      { const { error } = await supabase.from('tmk_mp_orders').delete().eq('order_no', o.order_no).eq('source', o.source || ''); if (error) throw error; }
+      /* .eq('source','') ไม่แมตช์แถวที่ source เป็น NULL → ลบ 0 แถว ไม่มี error แล้ว toast บอกว่าสำเร็จ
+         (หน้าออเดอร์คัดกรณีนี้ออกอยู่แล้ว — ทางลบทีละใบในลิ้นชักยังไม่ได้กัน) */
+      if (!o.source) throw new Error('ออเดอร์ใบนี้ไม่มีช่องทาง (source) — ลบจากหน้าออเดอร์แทน');
+      { const r = await supabase.from('tmk_mp_orders').delete().eq('order_no', o.order_no).eq('source', o.source).select('order_no');
+        if (r.error) throw r.error;
+        if (!r.data || !r.data.length) throw new Error('ไม่พบออเดอร์ใบนี้ในฐานข้อมูล (อาจถูกลบไปแล้ว)'); }
       try { await supabase.from('tmk_order_overrides').delete().eq('order_id', ovId); } catch { /* optional */ }
       try { await supabase.from('tmk_sku_overrides').delete().eq('order_no', o.order_no); } catch { /* optional — กัน override ลายบรรทัดค้างเป็น orphan */ }
       if (isReceipt) { try { await supabase.from('tmk_sale_receipts').delete().eq('order_no', o.order_no); } catch { /* optional */ } }
@@ -361,9 +374,17 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
   if (o.mkt_commission > 0) money.push({ label: 'ค่าธรรมเนียม', val: '−' + B(o.mkt_commission) });
   if (o.cod_amount > 0 && !isFullCod) money.push({ label: 'ยอด COD', val: B(o.cod_amount) });
   // PART 88.1: โหมดดู — ปุ่มจัดการย้ายเข้าการ์ด "ไฟล์ใบเสร็จ & จัดการ" (ไม่มี footer bar) · โหมดแก้ไขคง footer "ปิด"
-  const footerActions = edit ? <Button variant="outline" onClick={onClose}>ปิด</Button> : undefined;
+  // โหมดแก้ไข: ปุ่มทั้งหมดอยู่ footer เดียว (เดิมมีแถบปุ่มกลางเนื้อหา + footer "ปิด" ซ้อนกัน 2 ชั้น)
+  const footerActions = edit ? (
+    <div className="row" style={{ width: '100%', gap: 8, alignItems: 'center' }}>
+      {hasOv && <Button variant="ghost" size="sm" style={{ color: 'var(--bad)' }} onClick={revertOrder} disabled={busy} title="ล้างค่าที่แก้มือทั้งหมด กลับไปใช้ค่าจากไฟล์ใบเสร็จ/นำเข้า"><Icon name="refresh" /> คืนค่าจากไฟล์</Button>}
+      <span style={{ marginLeft: 'auto' }} />
+      <Button variant="outline" onClick={() => setEdit(null)} disabled={busy}>ยกเลิก</Button>
+      <Button onClick={saveOrder} disabled={busy} title={Number(edit.total) < 0 ? 'ยอดขายต้องไม่ติดลบ' : undefined}><Icon name="check" /> {busy ? 'กำลังบันทึก…' : 'บันทึกทั้งหมด'}</Button>
+    </div>
+  ) : undefined;
   // หัว drawer สะอาด — ชื่อออเดอร์อย่างเดียว (ช่องทาง/วันที่/ยอด ไปอยู่การ์ด "ข้อมูลออเดอร์" + กล่องยอด · PART 88.1)
-  return <SideSheet size="lg" icon="listChecks" title={`ออเดอร์ ${o.order_no}`}
+  return <SideSheet size="lg" icon={edit ? 'pencil' : 'listChecks'} title={`${edit ? 'แก้ไข' : 'ออเดอร์'} ${o.order_no}`} sub={edit ? 'แก้ตรงช่องได้ทุกจุด · บันทึกครั้งเดียว มีผลกับรายงานทันที' : undefined}
     onClose={onClose} footer={footerActions}>
     {(isCancelled || sk.length === 0 || designs.some(d => d.design === '(จับคู่ไม่ได้)')) && (
       <div className="quality-row items-center">
@@ -373,17 +394,7 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
       </div>
     )}
 
-    {edit && (
-      <div className="flex flex-col gap-3">
-        <div className="cap cap-head" style={{ fontWeight: 700, color: 'var(--accent)' }}><Icon name="pencil" /> แก้ไขออเดอร์ — แก้ตรงช่องได้ทุกจุด บันทึกครั้งเดียว มีผลกับรายงานทันที</div>
-        <OrderForm f={edit} setF={setEdit} mode="edit" paymentOptions={PAYMENT_TYPES} sellerOptions={sellerOptions} />
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 shadow-sm" style={{ borderColor: 'var(--line)', background: 'var(--surface)' }}>
-          <Button onClick={saveOrder} disabled={busy || Number(edit.total) < 0}><Icon name="check" /> {busy ? 'กำลังบันทึก…' : 'บันทึกทั้งหมด'}</Button>
-          <Button variant="ghost" onClick={() => setEdit(null)} disabled={busy}>ยกเลิก</Button>
-          {hasOv && <Button variant="ghost" className="ml-auto" style={{ color: 'var(--bad)' }} onClick={revertOrder} disabled={busy}><Icon name="refresh" /> คืนค่าจากไฟล์</Button>}
-        </div>
-      </div>
-    )}
+    {edit && <OrderForm f={edit} setF={setEdit} mode="edit" paymentOptions={PAYMENT_TYPES} sellerOptions={sellerOptions} />}
 
     {/* ยอดเงิน — การ์ดเดียว: ยอดเด่น + COD badge + เซลล์เสริม (ค่าธรรมเนียม/COD) + แยกราคา (ไม่โชว์ยอดซ้ำ) */}
     {!edit && <MoneyCard total={o.sales} codBadge={isFullCod ? 'เก็บปลายทาง (COD)' : ''} extras={money.slice(1)} discount={fin?.discount} />}
@@ -396,16 +407,15 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
         <span className="cap" style={{ color: 'var(--ink-4)' }}>· {N(sk.length)} รายการ · {N(sk.reduce((a, x) => a + (Number(x.qty) || 0), 0))} ตัว</span>
       </div>
       <CardTable className="table-wrap"><Table>
-        <TableHeader><TableRow><TableHead>ลาย</TableHead><TableHead>รหัส</TableHead><TableHead>สี</TableHead><TableHead>ไซซ์</TableHead><TableHead style={{ textAlign: 'right' }}>จำนวน</TableHead><TableHead style={{ textAlign: 'right' }}>ยอด</TableHead><TableHead>จับคู่</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead>ลาย</TableHead><TableHead>รหัส</TableHead><TableHead>สี</TableHead><TableHead>ไซซ์</TableHead><TableHead style={{ textAlign: 'right' }}>จำนวน</TableHead><TableHead style={{ textAlign: 'right' }}>ยอด</TableHead></TableRow></TableHeader>
         <TableBody>{sk.map((s, i) => (
           <TableRow key={i}>
-            <TableCell className="cell-title" style={{ fontWeight: 600 }}>{s.design || <span style={{ color: 'var(--bad)' }}>จับคู่ไม่ได้</span>}{s._resolveSrc === 'override' && <Badge variant="outline" className="ml-1.5 text-[10px]" style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}>แก้มือ</Badge>}{s.raw_sku_or_name && s.raw_sku_or_name !== s.design && <div className="cap" style={{ color: 'var(--ink-4)' }}>{s.raw_sku_or_name}</div>}</TableCell>
+            <TableCell className="cell-title" style={{ fontWeight: 600 }} title={s.match_how ? `จับคู่ลายด้วย: ${s.match_how}` : 'จับคู่ลายไม่ได้'}>{s.design || <span style={{ color: 'var(--bad)' }}>จับคู่ไม่ได้</span>}{s._resolveSrc === 'override' && <Badge variant="outline" className="ml-1.5 text-[10px]" style={{ color: 'var(--accent)', borderColor: 'var(--accent)' }}>แก้มือ</Badge>}{s.raw_sku_or_name && s.raw_sku_or_name !== s.design && <div className="cap" style={{ color: 'var(--ink-4)' }}>{s.raw_sku_or_name}</div>}</TableCell>
             <TableCell className="cap">{s.product_code || '—'}</TableCell>
             <TableCell className="cap">{s.color || '—'}</TableCell>
             <TableCell className="cap">{s.size || '—'}</TableCell>
             <TableCell className="num" style={{ textAlign: 'right' }}>{N(s.qty)}</TableCell>
             <TableCell className="num" style={{ textAlign: 'right' }}>{B(s.line_sales)}</TableCell>
-            <TableCell><span className="cap" style={{ color: s.match_how ? 'var(--ink-3)' : 'var(--bad)' }}>{s.match_how || '—'}</span></TableCell>
           </TableRow>
         ))}</TableBody>
       </Table></CardTable>
@@ -416,9 +426,8 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
     {/* ===== ข้อมูลออเดอร์ + ลูกค้า — การ์ดคู่โชว์เลย (ซ่อนตอนแก้ — ฟอร์มมีครบ) ===== */}
     {!edit && <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
       <DrawerGroup icon="listChecks" title="ข้อมูลออเดอร์">
-        <DrawerField label="เลขออเดอร์">{o.order_no}</DrawerField>
         {o.marketplace_id && o.marketplace_id !== '-' && <DrawerField label="ID มาร์เก็ตเพลส">{o.marketplace_id}</DrawerField>}
-        <DrawerField label="วันที่">{o.order_date || o.order_month}</DrawerField>
+        <DrawerField label="วันที่">{fmtD(o.order_date || o.order_month)}</DrawerField>
         <DrawerField label="ช่องทาง"><span className="row" style={{ gap: 6, alignItems: 'center' }}><span style={{ width: 8, height: 8, borderRadius: 3, background: channelColor(o.channel), flex: 'none' }} />{o.channel}</span></DrawerField>
         <DrawerField label="ประเภทงาน">{jt === 'ปลีก' ? 'ปลีก' : <span className={'chip ' + jtCls}>{jt}</span>}</DrawerField>
         {o.status && o.status !== 'completed' && o.status !== 'active' && <DrawerField label="สถานะ"><Badge variant="secondary">{stMap[o.status] || o.status}</Badge></DrawerField>}
@@ -426,7 +435,7 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
       </DrawerGroup>
       <DrawerGroup icon="user" title="ลูกค้า">
         <DrawerField label="ลูกค้า">{o.customer_name || '—'}</DrawerField>
-        {custCodeShow(o.customer_code, o.customer_name) && <DrawerField label="รหัสลูกค้า">{custCodeShow(o.customer_code, o.customer_name)}</DrawerField>}
+        {custCodeShow(o.customer_code, o.customer_name, o.customer_phone) && <DrawerField label="รหัสลูกค้า">{custCodeShow(o.customer_code, o.customer_name, o.customer_phone)}</DrawerField>}
         {o.customer_phone && <DrawerField label="เบอร์">{o.customer_phone}</DrawerField>}
         {o.customer_social && o.customer_social !== o.customer_name && <DrawerField label="โซเชียล">{o.customer_social}</DrawerField>}
         <DrawerField label="สถานะลูกค้า">{o.customer_type || '—'}</DrawerField>
@@ -457,10 +466,13 @@ export function OrderDrawer({ order: o, sk, buildDesigns, sellerOptions = [], on
         </>)}
         <span className="ml-auto flex items-center gap-1.5 flex-wrap">
           {!isCancelled && appCanEdit() && <Button size="sm" className="h-8 gap-1.5" onClick={startEdit} disabled={busy}><Icon name="pencil" /> แก้ไข</Button>}
-          {isCancelled
+          {/* ยกเลิก/นำกลับมา/ลบถาวร = การกระทำที่แก้ข้อมูล → viewer ไม่ควรเห็นปุ่มเลย
+              (ฝั่ง action กันด้วย appCanEdit() อยู่แล้ว แต่เดิมปุ่มโผล่ กดแล้วเจอ confirm ก่อนค่อยถูกปฏิเสธ
+               ไม่ตรงกับหน้าออเดอร์ที่ห่อทั้งแถบด้วย canEdit) */}
+          {appCanEdit() && (isCancelled
             ? <Button variant="outline" size="sm" className="h-8 gap-1.5" style={{ color: 'var(--good)' }} onClick={restoreOrder} disabled={busy}><Icon name="refresh" /> นำกลับมา</Button>
-            : <Button variant="ghost" size="sm" className="h-8 gap-1.5" style={{ color: 'var(--warn)' }} onClick={cancelOrder} disabled={busy}>ยกเลิก</Button>}
-          <Button variant="ghost" size="sm" className="h-8 px-2.5" style={{ color: 'var(--bad)' }} onClick={deleteOrder} disabled={busy} title="ลบออเดอร์ถาวร"><Icon name="trash" /></Button>
+            : <Button variant="ghost" size="sm" className="h-8 gap-1.5" style={{ color: 'var(--warn)' }} onClick={cancelOrder} disabled={busy}>ยกเลิก</Button>)}
+          {appCanEdit() && <Button variant="ghost" size="sm" className="h-8 px-2.5" style={{ color: 'var(--bad)' }} onClick={deleteOrder} disabled={busy} title="ลบออเดอร์ถาวร"><Icon name="trash" /></Button>}
         </span>
       </div>
     )}

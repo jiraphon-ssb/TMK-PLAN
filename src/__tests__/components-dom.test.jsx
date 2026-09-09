@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { SourceBadge, InfoTip } from '../components.jsx';
@@ -32,5 +32,21 @@ describe('InfoTip (component · tooltip toggle)', () => {
   it('ไม่มี text → ไม่ render อะไร', () => {
     const { container } = render(<InfoTip text="" />);
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+/* PART 116 — แถบเตือนเน็ตหลุด */
+describe('OfflineBar', () => {
+  it('ออนไลน์ = ไม่โผล่ · ออฟไลน์ = เตือนว่าบันทึกไม่ได้', async () => {
+    const { OfflineBar } = await import('../components/OfflineBar.jsx');
+    const spy = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const { container, unmount } = render(<OfflineBar />);
+    expect(container.innerHTML).toBe('');
+    unmount();
+
+    spy.mockReturnValue(false);
+    render(<OfflineBar />);
+    expect(screen.getByText(/เน็ตหลุด/)).toBeInTheDocument();
+    spy.mockRestore();
   });
 });

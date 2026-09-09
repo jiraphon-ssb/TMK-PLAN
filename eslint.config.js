@@ -10,7 +10,7 @@ export default defineConfig([
 
   // ไฟล์ config รันบน Node (require/module/process) — ให้ node globals กัน no-undef
   {
-    files: ['*.config.js', 'tailwind.config.js', 'postcss.config.js', 'vite.config.js', 'vitest.config.js'],
+    files: ['*.config.js', 'tailwind.config.js', 'postcss.config.js', 'vite.config.js', 'vitest.config.js', 'playwright.config.js', 'e2e/**/*.js'],
     languageOptions: { globals: globals.node },
   },
 

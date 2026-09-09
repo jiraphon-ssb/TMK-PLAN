@@ -14,6 +14,7 @@ import { logAudit, diffFields } from './lib/audit.js';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { SearchInput } from '@/components/ui/search-input';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -25,6 +26,7 @@ import { roleMeta, LockPicker, DutySelect, RoleSelect } from './views-settings-p
 export { DutiesView } from './views-settings-duties.jsx';
 
 export function RolesView() {
+  const [userQuery, setUserQuery] = useState('');   // ค้นหาผู้ใช้ในรายการ
   const { reload, refresh } = useData() || {};
   // หน้าที่ — ดึงจาก tmk_duties (Supabase) — เพิ่ม/แก้/ลบได้ใน tab "หน้าที่"
   const DUTIES = TMK.duties || [];
@@ -279,23 +281,30 @@ export function RolesView() {
     return resp.includes(name) || (dutyName && resp.includes(dutyName));
   }).length;
 
+  const uq = userQuery.trim().toLowerCase();
+  const shownUsers = uq ? users.filter(u => [u.name, u.email, u.department].some(x => String(x || '').toLowerCase().includes(uq))) : users;
+
   const closeAdd = () => { setShowAdd(false); setNewEmail(''); setNewName(''); setNewRole('editor'); setNewDutyId(DUTIES[0]?.id || ''); setNewLocks([]); };
 
   return (
-    <div className="flex flex-col gap-6 max-w-4xl mx-auto w-full">
+    <div className="flex flex-col gap-4 max-w-3xl w-full">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3 border-b border-border/50 bg-muted/20">
           <CardTitle className="text-lg flex items-center gap-2">
-            <Icon name="shield" className="size-5 text-primary" /> สิทธิ์ผู้ใช้ ({users.length})
+            <Icon name="shield" className="size-5 text-primary" /> ผู้ใช้ & สิทธิ์ <span className="text-sm font-normal text-muted-foreground">({users.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setShowAdd(true)}>
-            <Icon name="userPlus" className="size-4 mr-2" /> เพิ่มผู้ใช้ใหม่
-          </Button>
+          <div className="flex items-center gap-2">
+            {users.length > 6 && <SearchInput placeholder="ค้นหาชื่อ / อีเมล" value={userQuery} onChange={e => setUserQuery(e.target.value)} wrapperClassName="w-[190px]" />}
+            <Button size="sm" onClick={() => setShowAdd(true)}>
+              <Icon name="userPlus" className="size-4 mr-2" /> เพิ่มผู้ใช้ใหม่
+            </Button>
+          </div>
         </CardHeader>
 
         <CardContent className="p-0">
           <div className="flex flex-col">
-            {users.map(u => {
+            {shownUsers.length === 0 && <div className="p-6 text-center text-sm text-muted-foreground">ไม่พบผู้ใช้ที่ตรงกับ "{userQuery}"</div>}
+            {shownUsers.map(u => {
               const tasks = taskCount(u.name, u.department);
               const meta = roleMeta[u.role] || { l: u.role, cls: '' };
               

@@ -4,7 +4,6 @@
    pure transform (ไม่มี TMK singleton/computeMonth call · comment เท่านั้น) · dataContext เรียกใน mutateTMK
    ============================================================ */
 import { getToday, THAI_MONTHS } from './dateUtils.js';
-import { productStock, variantGrid } from '../components.jsx';
 
 const THAI_MONTH = THAI_MONTHS;
 
@@ -195,60 +194,8 @@ export function mapToTMK(raw) {
     sortOrder: f.sort_order || 0,
   })).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
 
-  // Products
-  const products = memoSection('products', [raw.products], () => (raw.products || []).map((p, i) => {
-    // ล็อต (batch) = ตาราง ไซส์ × สี: [{ id, lotNo, date, cost, note, sizes, colors, grid }]
-    // มีล็อต → สต็อก = ผลรวมทุกช่อง grid ทุกล็อต (helper รองรับ legacy lot ที่มี qty เดี่ยวด้วย)
-    const lots = Array.isArray(p.lots) ? p.lots : [];
-    const hasLots = lots.length > 0;
-    const { total: lotTotal, value: stockValue, sizeStock, colorStock } = productStock(lots);
-    // มีล็อต = ใช้ผลรวมล็อต (track เสมอ); ไม่มีล็อต = ใช้ stock_on_hand เดิม (null = ยังไม่กรอก)
-    const stockRaw = hasLots ? lotTotal : p.stock_on_hand;
-    const reorder = Number(p.reorder_point || 0);
-    const onHand = Number(stockRaw || 0);
-    // จองสต็อก (reservations): [{ id, customer, date, note, items:[{color,size,qty}] }]
-    const reservations = Array.isArray(p.reservations) ? p.reservations : [];
-    const reservedByVariant = {}; let reservedTotal = 0;
-    reservations.forEach(r => (r.items || []).forEach(it => {
-      const q = Math.max(0, Number(it.qty) || 0); if (!q) return;
-      reservedTotal += q;
-      (reservedByVariant[it.color] || (reservedByVariant[it.color] = {}))[it.size] = (reservedByVariant[it.color]?.[it.size] || 0) + q;
-    }));
-    const available = Math.max(0, onHand - reservedTotal); // พร้อมขาย (ATP)
-    // วันที่ล็อตเก่าสุด (อายุสต็อก) — เอาเฉพาะล็อตที่มีของ
-    const lotDates = lots.filter(l => l.date).map(l => l.date).sort();
-    const oldestLotDate = lotDates[0] || '';
-    return {
-      id: p.id,
-      rank: i + 1,
-      name: p.name,
-      price: Number(p.price || 0),
-      units: Number(p.actual_units || 0),
-      rev: Number(p.price || 0) * Number(p.actual_units || 0),
-      // stock = null/undefined → 'ok' (ยังไม่กรอก ไม่ใช่หมด); กัน null<=0 ขึ้น "หมดสต็อก" ผิด
-      stock: stockRaw == null ? 'ok' : stockRaw <= 0 ? 'out' : stockRaw < reorder ? 'low' : 'ok',
-      onHand,
-      reorder,
-      strategy: p.strategy || '',
-      image: p.image_url || '',
-      category: p.category || '',
-      supplier: p.supplier || '',
-      sku: p.sku || '',
-      barcode: p.barcode || '',
-      lots,
-      hasLots,
-      lotTotal,
-      stockValue,                       // มูลค่าต้นทุนคงคลัง (Σ จำนวน×ต้นทุน)
-      sizeStock,                        // { size: qty } รวมทุกล็อต
-      colorStock,                       // { colorName: qty } รวมทุกล็อต
-      variants: variantGrid(lots),      // { colorName: { size: qty } } สำหรับ drill-down หน้าสต็อก
-      reservations,                     // รายการจอง
-      reservedTotal,                    // จองรวม (ตัว)
-      reservedByVariant,                // { color: { size: qty } } ที่จองไว้
-      available,                        // พร้อมขาย = onHand − reservedTotal
-      oldestLotDate,                    // วันที่ล็อตเก่าสุด (อายุสต็อก)
-    };
-  }));
+  // สินค้า/ล็อต ยุคเก่า (tmk_products) ลบถาวร PART 118 — เลิกโหลดตั้งแต่ PART 116 · หน้า "สินค้า" ใช้ tmk_shirt_catalog แทน
+  const products = [];
 
   // dailyAll — ทุกแถว daily ทุกเดือน + รายละเอียดต่อช่องทาง (สำหรับ dashboard รายเดือน)
   const _chIds = (raw.channels || []).map(c => c.id);
@@ -446,29 +393,8 @@ export function mapToTMK(raw) {
     }
   }
 
-  // ออเดอร์ + ลูกค้า (Phase 1)
-  const orders = memoSection('orders', [raw.orders], () => (raw.orders || []).map(o => {
-    const items = Array.isArray(o.items) ? o.items : [];
-    return {
-      id: o.id, code: o.code, customerId: o.customer_id || '', customerName: o.customer_name || '',
-      items, subtotal: Number(o.subtotal || 0), discount: Number(o.discount || 0), total: Number(o.total || 0),
-      status: o.status || 'pending', channel: o.channel || '', trackingNo: o.tracking_no || '', carrier: o.carrier || '',
-      note: o.note || '', statusLog: Array.isArray(o.status_log) ? o.status_log : [],
-      createdAt: o.created_at, qty: items.reduce((a, it) => a + (Number(it.qty) || 0), 0),
-    };
-  }));
-  // ยอดสะสมต่อลูกค้า: ใช้ view (รวมทุกออเดอร์) ก่อน — ไม่มี view (ยังไม่รัน migration) ค่อย fallback รวมจาก orders ที่โหลดมา (อาจต่ำกว่าจริงถ้าเกิน 500)
-  const customers = memoSection('customers', [raw.customers, raw.orders, raw.customerTotals], () => {
-  const _ordByCust = {};
-  orders.forEach(o => { if (!o.customerId) return; const c = _ordByCust[o.customerId] || (_ordByCust[o.customerId] = { count: 0, spent: 0 }); c.count++; if (o.status !== 'cancelled') c.spent += o.total; });
-  const _ctByCust = {};
-  (raw.customerTotals || []).forEach(t => { if (t.customer_id) _ctByCust[t.customer_id] = { count: Number(t.order_count || 0), spent: Number(t.total_spent || 0) }; });
-  const _custTotal = (id) => _ctByCust[id] || _ordByCust[id] || { count: 0, spent: 0 };
-  return (raw.customers || []).map(c => ({
-    id: c.id, code: c.code || '', name: c.name || '', phone: c.phone || '', line: c.line || '', address: c.address || '', note: c.note || '',
-    createdAt: c.created_at, orderCount: _custTotal(c.id).count, totalSpent: _custTotal(c.id).spent,
-  }));
-  });
+  // ออเดอร์/ลูกค้า ยุคเก่า (tmk_orders / tmk_customers) ลบถาวร PART 118 — Sale ใช้ tmk_mp_orders / tmk_mp_customers
+  const orders = [], customers = [];
 
   return {
     consts: { TARGET, DAY, DAYS, ACOS_CEIL, AD_BUDGET, current_month: currentMonth, current_year: currentYear },

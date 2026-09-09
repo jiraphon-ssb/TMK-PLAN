@@ -1,20 +1,18 @@
 /* ============================================================
-   TMK Operation — Views part 1: Home (cockpit) + Sales
-   ============================================================ */
+   TMK Operation — Views part 1: การ์ดที่ใช้ร่วม (ทีมวันนี้ / แคมเปญ)
+   ============================================================
+   HomeView ย้ายไป src/homeView.jsx แล้ว (PART 122) — ไฟล์นี้เหลือ 2 การ์ดที่หน้าแรกเรียกใช้ */
 import { useState, useEffect } from 'react';
 import { TMK } from './data.js';
-import { B, P, Icon, Avatar, Ring } from './components.jsx';
-import { useUser } from './userContext.jsx';
-import { getToday, THAI_MONTHS, THAI_MONTHS_FULL, todayISO } from './lib/dateUtils.js';
-import { computeMonth } from './dataContext.jsx';
+import { Icon, Avatar, Ring } from './components.jsx';
+import { todayISO } from './lib/dateUtils.js';
 import { supabase } from './lib/supabaseClient.js';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { toast, openModal } from './lib/appBus.js';
 
-const THAI_WEEKDAYS = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'];
-
+import { teamMembers } from './lib/teamPresence.js';
+import { userEmail } from './lib/appBus.js';
 const D = TMK;
 // ❌ ไม่ destructure constants เพราะ primitive snapshot จะค้างที่ 0
 // ✅ ใช้ TMK.consts.X inline เพื่อให้อัปเดตจาก Supabase ทันที
@@ -24,17 +22,22 @@ const D = TMK;
    HOME — Executive cockpit
    ============================================================ */
 /* ---------- ทีมวันนี้ — ออนไลน์/ออฟไลน์ จาก tmk_presence (heartbeat) ---------- */
-const ONLINE_MS = 150000; // 2.5 นาที — heartbeat ทุก 45 วิ ให้ margin พอ
 const PAGE_LABEL = { home: 'หน้าหลัก', sales: 'ยอดขาย', planner: 'แผนงาน', catalog: 'สินค้า', settings: 'ตั้งค่า' };
 
-function TeamTodayCard({ go }) {
+export function TeamTodayCard({ go }) {
   const [presence, setPresence] = useState([]);
+  const [presErr, setPresErr] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     let alive = true;
     const fetchP = async () => {
       const { data, error } = await supabase.from('tmk_presence').select('email,name,page,last_seen_at');
-      if (alive && !error && Array.isArray(data)) setPresence(data);
+      if (!alive) return;
+      /* "อ่านไม่ได้" ≠ "ไม่มีใครออนไลน์" — เดิมกลืน error เงียบ แล้วโชว์ "0 ออนไลน์"
+         เป็นข้อเท็จจริง ทั้งที่ยังใช้งานกันอยู่ (ตาราง tmk_presence ยังไม่ migrate ก็เข้าทางนี้) */
+      if (error) { setPresErr(true); return; }
+      setPresErr(false);
+      if (Array.isArray(data)) setPresence(data);
     };
     fetchP();
     // อ่านสด + ขยับ "now" ทุก 30 วิ → คนที่เงียบเกินหน้าต่างจะกลายเป็นออฟไลน์เอง
@@ -44,22 +47,11 @@ function TeamTodayCard({ go }) {
     return () => { alive = false; clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, []);
 
-  const pmap = {};
-  presence.forEach(p => { if (p.email) pmap[String(p.email).toLowerCase()] = p; });
-  const todayStr = todayISO();
   const openTasks = (D.tasks || []).filter(t => t.status !== 'done');
-  const members = (D.roles || []).map(r => {
-    const p = pmap[String(r.email || '').toLowerCase()];
-    const last = p?.last_seen_at ? new Date(p.last_seen_at).getTime() : 0;
-    const online = !!last && (now - last) < ONLINE_MS;
-    // เทียบวันแบบ "เวลาท้องถิ่น" (ไม่ใช่ UTC) — กัน heartbeat ก่อน 07:00 ไทยถูกนับเป็นเมื่อวาน
-    const ld = last ? new Date(last) : null;
-    const activeToday = !!ld && `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}` === todayStr;
-    const load = openTasks.filter(t => (t.responsible || []).some(x => x === r.name || x === r.department)).length;
-    return { ...r, online, activeToday, page: p?.page || '', last, load };
-  });
-  // เรียง: ออนไลน์ก่อน → เคลื่อนไหววันนี้ → ล่าสุดใหม่สุด
-  members.sort((a, b) => (b.online - a.online) || (b.activeToday - a.activeToday) || (b.last - a.last));
+  /* รายชื่อ + สถานะออนไลน์ = lib/teamPresence.js (pure · มีเทสคุม)
+     รวม tmk_user_roles กับคนที่มี heartbeat แต่ยังไม่มี role — ไม่งั้นได้ "0 ออนไลน์" ทั้งที่ใช้งานอยู่ */
+  const members = teamMembers(D.roles, presence, now, todayISO(), userEmail())
+    .map(r => ({ ...r, load: openTasks.filter(t => (t.responsible || []).some(x => x === r.name || x === r.department)).length }));
   const onlineCount = members.filter(m => m.online).length;
   const activeCount = members.filter(m => m.activeToday).length;
 
@@ -79,7 +71,9 @@ function TeamTodayCard({ go }) {
           <CardTitle className="flex items-center text-base font-semibold">
             <Icon name="users" className="mr-2 h-4 w-4 text-primary" />
             ทีมวันนี้
-            {members.length > 0 && <span className="ml-2 text-xs font-normal text-muted-foreground">· {onlineCount} ออนไลน์</span>}
+            {presErr
+              ? <span className="ml-2 text-xs font-normal" style={{ color: 'var(--warn)' }}>· อ่านสถานะไม่ได้</span>
+              : members.length > 0 && <span className="ml-2 text-xs font-normal text-muted-foreground">· {onlineCount} ออนไลน์</span>}
           </CardTitle>
         </div>
         <Button variant="ghost" size="sm" onClick={() => go('settings', 'roles')} className="h-8 text-xs">
@@ -87,7 +81,9 @@ function TeamTodayCard({ go }) {
         </Button>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
-        {members.length === 0 ? (
+        {presErr && members.length === 0 ? (
+          <div className="text-center text-sm py-6" style={{ color: 'var(--warn)' }}>อ่านสถานะออนไลน์ไม่สำเร็จ — ตัวเลขด้านล่างจะไม่ตรง</div>
+        ) : members.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-6">ยังไม่มีสมาชิกในทีม</div>
         ) : (
           <>
@@ -144,7 +140,7 @@ function TeamTodayCard({ go }) {
 
 /* ---------- แคมเปญ — donut total/กำลังรัน/เสี่ยง จาก TMK.campaigns ---------- */
 const CAMP_TABS = [['all', 'ทั้งหมด'], ['live', 'กำลังรัน'], ['risk', 'เสี่ยง'], ['upcoming', 'รอเริ่ม']];
-function CampaignsCard({ go }) {
+export function CampaignsCard({ go }) {
   const [campFilter, setCampFilter] = useState('all'); // filter เลือกดูแคมเปญตามสถานะ
   const today = todayISO();
   // ใกล้จบใน 5 วัน — คำนวณแบบ pure จาก today (เลี่ยง Date.now ระหว่าง render)
@@ -252,157 +248,7 @@ function CampaignsCard({ go }) {
 
 /* Skeleton ยอดขาย: การ์ด KPI + กราฟ */
 
-export function HomeView({ go }) {
-  const { user } = useUser() || {};
-  const userName = user?.name || 'มัง';
-  // ข้อมูลอยู่ใน TMK singleton แล้ว = ไม่มีการโหลดจริง → render ทันที (เดิมมี skeleton หลอก 320-350ms)
-
-  // โฟกัสวันนี้ — สิ่งที่ต้องจัดการ (หลังบ้าน ไม่มียอด/เป้า) + งานวันนี้
-  const todayD = getToday().day;
-  const enteredToday = (D.dailyMonth || []).some(d => d.d === todayD);
-  const dueTasks = (D.tasks || []).filter(t => t.status !== 'done' && t.dateISO && t.dateISO <= todayISO());
-  const todayTasks = (D.tasks || []).filter(t => t.status === 'inprogress' || t.status === 'review' || t.dateISO === todayISO());
-  const pendingOrders = (D.orders || []).filter(o => o.status !== 'shipped' && o.status !== 'cancelled');
-  const todos = [];
-  if (!enteredToday) todos.push({ c: 'var(--bad)', t: 'ยังไม่บันทึกยอดขายวันนี้', d: 'กดเพื่อกรอกยอดรายวัน', act: () => go('sales', 'monthly') });
-  if (dueTasks.length) todos.push({ c: 'var(--warn)', t: `งานครบกำหนด/ค้าง ${dueTasks.length} งาน`, d: dueTasks.slice(0, 2).map(t => t.title).join(', '), act: () => go('flows', 'kanban') });
-  if (pendingOrders.length) todos.push({ c: 'var(--accent-2)', t: `ออเดอร์รอจัดการ ${pendingOrders.length} รายการ`, d: 'จัดการบนบอร์ดออเดอร์', act: () => go('catalog', 'orders') });
-
-  // สรุปเมื่อวาน — digest อ่านจบใน 10 วินาที (รองรับเมื่อวานข้ามเดือน)
-  const digest = (() => {
-    const td = getToday();
-    let mdD, yd; // เดือนที่ "เมื่อวาน" อยู่ + เลขวันเมื่อวาน
-    if (td.day > 1) { mdD = computeMonth(td.month - 1, td.yearBE); yd = td.day - 1; }
-    else {
-      const pm = td.month === 1 ? 12 : td.month - 1, py = td.month === 1 ? td.yearBE - 1 : td.yearBE;
-      mdD = computeMonth(pm - 1, py); yd = new Date(py - 543, pm, 0).getDate();
-    }
-    const rows = mdD.dailyBreakdown || [];
-    const yest = rows.find(x => x.d === yd) || null;
-    const pool = rows.filter(x => x.d < yd).sort((a, b) => b.d - a.d).slice(0, 7);
-    const avg7 = pool.length ? pool.reduce((a, x) => a + x.total, 0) / pool.length : 0;
-    const top = yest && yest.channels.length ? [...yest.channels].sort((a, b) => b.rev - a.rev)[0] : null;
-    const diff = yest && avg7 > 0 ? ((yest.total - avg7) / avg7) * 100 : null;
-    return { yd, yest, avg7, top, diff, label: yest ? yest.label : `${yd} ${THAI_MONTHS[(td.day > 1 ? td.month : (td.month === 1 ? 12 : td.month - 1)) - 1]}` };
-  })();
-  const copyDigest = () => {
-    if (!digest.yest) return;
-    const t = `สรุปยอด TMK — เมื่อวาน (${digest.label}): ${B(digest.yest.total)}`
-      + (digest.top ? ` · ช่องเด่น ${digest.top.name} ${B(digest.top.rev)} (${P(digest.top.pct, 0)})` : '')
-      + (digest.diff != null ? ` · เทียบเฉลี่ย 7 วัน ${digest.diff >= 0 ? '+' : ''}${digest.diff.toFixed(0)}%` : '');
-    try { navigator.clipboard.writeText(t); toast('คัดลอกสรุปแล้ว — แปะส่งไลน์ได้เลย', 'success'); } catch { toast('คัดลอกไม่สำเร็จ', 'error'); }
-  };
-
-  return (
-    <div className="content-inner rise">
-      {/* greeting */}
-      <div className="row between wrap" style={{ marginBottom: 20, gap: 12 }}>
-        <div>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>{(() => { const td = getToday(); return `${THAI_WEEKDAYS[new Date().getDay()]} ${td.day} ${THAI_MONTHS_FULL[td.month - 1]} ${td.yearBE}`; })()}</div>
-          <h1 className="display">{(() => { const h = new Date().getHours(); return h < 12 ? 'สวัสดีตอนเช้า' : h < 17 ? 'สวัสดีตอนบ่าย' : h < 21 ? 'สวัสดีตอนเย็น' : 'สวัสดีตอนดึก'; })()}, {userName} {'👋'}</h1>
-        </div>
-        <Badge variant={navigator.onLine ? 'success' : 'warning'}><span className="dot-c" style={{ background: navigator.onLine ? 'var(--good)' : 'var(--warn)' }}></span> {navigator.onLine ? 'ออนไลน์' : 'ออฟไลน์'}</Badge>
-      </div>
-
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1.5fr', gap: 16, alignItems: 'start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* โฟกัสวันนี้ */}
-        <Card className="p-[22px]">
-          <CardHeader className="flex-row items-center justify-between space-y-0 p-0 pb-4">
-            <CardTitle className="m-0 text-lg font-semibold flex items-center gap-2"><span style={{ color: 'var(--accent)' }}><Icon name="listChecks" /></span> {'โฟกัสวันนี้'}</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => go('flows', 'kanban')}>{'งานทั้งหมด'} <Icon name="arrowR" /></Button>
-          </CardHeader>
-          {todos.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: todayTasks.length ? 16 : 0 }}>
-              {todos.map((td, i) => (
-                <div key={i} className="row" onClick={td.act} style={{ gap: 10, padding: '10px 11px', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', borderLeft: `3px solid ${td.c}`, cursor: 'pointer' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="sm" style={{ fontWeight: 600 }}>{td.t}</div>
-                    {td.d && <div className="cap" style={{ marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{td.d}</div>}
-                  </div>
-                  <span style={{ flexShrink: 0, color: 'var(--ink-3)' }}><Icon name="arrowR" /></span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="cap" style={{ textAlign: 'center', padding: '18px 0', color: 'var(--good)', fontWeight: 600 }}><Icon name="check" /> ไม่มีอะไรค้าง — เคลียร์หมดแล้ว</div>
-          )}
-          {todayTasks.length > 0 && (<>
-            <div className="text-xs font-bold text-muted-foreground mb-2 uppercase tracking-wide">งานวันนี้ <span className="opacity-70">({todayTasks.length})</span></div>
-            <div className="flex flex-col divide-y divide-border/50">
-              {todayTasks.slice(0, 6).map(t => {
-                const stMap = { todo: { l: 'รอทำ', c: 'var(--ink-3)' }, inprogress: { l: 'กำลังทำ', c: 'var(--info)' }, review: { l: 'รอตรวจ', c: 'var(--warn)' }, done: { l: 'เสร็จ', c: 'var(--good)' } }[t.status] || { l: '—', c: 'var(--ink-3)' };
-                // ผู้รับผิดชอบ — resolve ชื่อ → staff/หน้าที่ (สี avatar)
-                const names = Array.isArray(t.responsible) ? t.responsible : String(t.responsible || '').split(',').map(s => s.trim()).filter(Boolean);
-                const assignees = names.map(n => { const st = (D.staff || []).find(s => s.name === n); const du = (D.duties || []).find(d => d.name === n); return { name: n, color: st?.color || du?.color || 'var(--ink-3)' }; });
-                return (
-                  <div key={t.id} onClick={() => openModal('task', { ...t, channel: Array.isArray(t.channel) ? t.channel : [t.channel] })}
-                    className="flex items-center gap-3 px-2 py-2.5 -mx-1 rounded-lg hover:bg-muted/40 cursor-pointer transition-colors">
-                    <span className="size-2 rounded-full shrink-0" style={{ background: stMap.c }} />
-                    <span className="text-sm font-medium flex-1 truncate">{t.title}</span>
-                    {assignees.length > 0 && (
-                      <div className="flex -space-x-1.5 shrink-0" title={assignees.map(a => a.name).join(', ')}>
-                        {assignees.slice(0, 2).map((a, i) => (
-                          <span key={i} className="inline-flex rounded-full ring-2 ring-card"><Avatar name={a.name} color={a.color} size={22} /></span>
-                        ))}
-                        {assignees.length > 2 && <span className="inline-flex items-center justify-center size-[22px] rounded-full ring-2 ring-card bg-muted text-[10px] font-semibold text-muted-foreground">+{assignees.length - 2}</span>}
-                      </div>
-                    )}
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0" style={{ background: stMap.c + '1a', color: stMap.c }}>{stMap.l}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </>)}
-        </Card>
-
-        {/* สรุปเมื่อวาน — digest อัตโนมัติ */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="flex items-center text-base font-semibold">
-              <Icon name="up" className="mr-2 h-4 w-4 text-primary" /> สรุปเมื่อวาน
-              <span className="ml-2 text-xs font-normal text-muted-foreground">({digest.label})</span>
-            </CardTitle>
-            {digest.yest && <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={copyDigest} title="คัดลอกข้อความสรุป — แปะส่งไลน์ได้เลย">คัดลอก</Button>}
-          </CardHeader>
-          <CardContent>
-          {digest.yest ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-              <div className="row" style={{ gap: 10, alignItems: 'baseline' }}>
-                <span className="num h1">{B(digest.yest.total)}</span>
-                {digest.diff != null && <span className="cap" style={{ fontWeight: 700, color: digest.diff >= 0 ? 'var(--good)' : 'var(--bad)' }}>{digest.diff >= 0 ? '▲ +' : '▼ '}{digest.diff.toFixed(0)}% {'เทียบเฉลี่ย 7 วัน'}</span>}
-              </div>
-              {digest.top && (
-                <div className="row" style={{ gap: 8 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: digest.top.hex, flexShrink: 0 }}></span>
-                  <span className="cap">{'ช่องเด่น'}: <strong>{digest.top.name}</strong> {B(digest.top.rev)} ({P(digest.top.pct, 0)} {'ของวัน'})</span>
-                </div>
-              )}
-              <div className="cap" style={{ color: 'var(--ink-4)' }}>{'แตะ'} "{'คัดลอก'}" {'เพื่อส่งสรุปเข้าไลน์ทีมได้ทันที'}</div>
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '14px 0', color: 'var(--ink-4)' }}>
-              <div className="cap" style={{ marginBottom: 8 }}>{'ยังไม่มีข้อมูลเมื่อวาน'} ({digest.label})</div>
-              <Button variant="outline" size="sm" onClick={() => openModal('record', {})}>กรอกย้อนหลัง</Button>
-            </div>
-          )}
-          </CardContent>
-        </Card>
-
-        </div>
-
-        {/* คอลัมน์ขวา — แคมเปญ */}
-        <CampaignsCard go={go} />
-      </div>
-
-      {/* ทีมวันนี้ — การ์ดสมาชิกทุกคน (เต็มความกว้าง · 3 คอลัมน์/แถว) */}
-      <div style={{ marginTop: 16 }}>
-        <TeamTodayCard go={go} />
-      </div>
-    </div>
-  );
-}
-
+/* HomeView ย้ายไป src/homeView.jsx (PART 122 — รื้อหน้าแรก) · ไฟล์นี้เหลือการ์ดที่ใช้ร่วม */
 
 /* ============================================================
    SALES — sub: overview / channels / ads / customers
@@ -410,5 +256,4 @@ export function HomeView({ go }) {
 
 /* Shared date picker bar */
 
-// SalesView ย้ายไป views-sales.jsx (REFACTOR-1) — re-export กัน consumer เดิม (App.jsx) พัง
-export { SalesView } from './views-sales.jsx';
+// PART 103: SalesView (หน้ายอดขายเก่า) ถูกลบถาวร — section ยุบเข้ารายงานขายแล้ว

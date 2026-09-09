@@ -3,6 +3,7 @@
    - CalendarView ยกมาทั้งดุ้น ไม่แก้เนื้อใน · รับ filtered/fProps/flow/readOnly เป็น props เหมือนเดิม
    ============================================================ */
 import React, { useState } from 'react';
+import { pgErrorText } from './lib/pgError.js';
 import { Icon } from './components.jsx';
 import { supabase } from './lib/supabaseClient.js';
 import { versionedUpdate, promptConflictResolution } from './lib/optimisticUpdate.js';
@@ -15,6 +16,8 @@ import { Button } from '@/components/ui/button';
 import { DD, _isoToDate, _dateToIso } from './saleWidgets.jsx';
 import { toast, openModal, refresh, canEdit } from './lib/appBus.js';
 import { PlannerFilters } from './plannerFilters.jsx';
+import { doneIdsOf } from './plannerColumns.js';
+import { dueInfo, sortTasks, isoToday } from './lib/taskFilters.js';
 
 /* ---- Calendar (month navigation + week view) — ชื่อเดือนใช้ร่วมจาก lib/dateUtils ---- */
 const DAY_LABELS = ['อา','จ','อ','พ','พฤ','ศ','ส'];
@@ -53,10 +56,13 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
     for (let d = ds; d <= de; d++) (dayAll[d] = dayAll[d] || []).push(t);
   });
 
+  // เปลี่ยนเดือน — คงวันที่เดิมไว้ (เดิมเด้งไปวันที่ 1 ทุกครั้ง = เสียบริบท) · กลับมาเดือนนี้ = วันนี้
   const shiftMonth = (delta) => {
     let m = ym.m + delta, y = ym.y;
     if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
-    setYm({ y, m }); setSel(1);
+    const dim = new Date(y - 543, m + 1, 0).getDate();
+    const keep = (y === curY && m === curM) ? T.day : Math.min(sel, dim);
+    setYm({ y, m }); setSel(keep);
   };
   const goToday = () => { setYm({ y: curY, m: curM }); setSel(T.day); };
 
@@ -68,7 +74,18 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
 
 
-  const selTasks = dayAll[sel] || [];
+  // งานของวันที่เลือก — เรียงตามความเร่งด่วน (เลยกำหนดก่อน) ไม่ใช่ลำดับที่บังเอิญมาจากลูป
+  const doneIds = doneIdsOf(flow);
+  const todayIso = isoToday();
+  const selTasks = sortTasks(dayAll[sel] || [], 'due');
+  const selOverdue = selTasks.filter(t => dueInfo(t, todayIso, doneIds).state === 'overdue').length;
+  const pickDay = (d) => {
+    setSel(d);
+    // จอแคบ: แผงงานอยู่ใต้ปฏิทิน → เลื่อนให้เห็นทันทีที่กดวัน
+    if (typeof window !== 'undefined' && window.innerWidth <= 900) {
+      requestAnimationFrame(() => dayRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
+  };
 
   // ลากงานเปลี่ยนวัน (E3) — ลากการ์ดมาวางที่ช่องวัน → อัปเดต date
   const dragId = React.useRef(null);
@@ -83,14 +100,13 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
     return () => { window.removeEventListener('dragend', reset); window.removeEventListener('drop', reset); };
   }, []);
   const reschedule = async (id, day) => {
-    const wasDay = dropDay; dragId.current = null; setDropDay(null);
+    dragId.current = null; setDropDay(null);
     if (!id || readOnly) return;
     if (!canEdit()) { toast('สิทธิ์ "ดูอย่างเดียว" — ย้ายงานไม่ได้', 'warn'); return; }
     const iso = mkIso(day);
     const task = filtered.find(t => t.id === id);
     const oldS = task ? (task.dateISO || parseTaskDate(task.date)) : '';
     if (task && oldS === iso) return;
-    void wasDay;
     try {
       // งานช่วงวัน: ลากแล้วเลื่อนทั้งช่วง — วันสิ้นสุดขยับตามจำนวนวันที่เลื่อน
       const patch = { date: iso };
@@ -110,7 +126,7 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
       if (!r.ok) throw r.error || new Error('เลื่อนวันไม่สำเร็จ');
       logAudit({ action: 'move', entityType: 'task', entityName: task?.title || id, summary: `เลื่อนวันงาน "${task?.title || ''}" → ${day} ${MONTHS_TH_SHORT[ym.m]}`, flowId: task?.flow ?? '' });
       refresh(['tmk_tasks']);
-    } catch (err) { toast('เลื่อนวันไม่สำเร็จ: ' + (err?.message || ''), 'error'); }
+    } catch (err) { toast('เลื่อนวันไม่สำเร็จ: ' + pgErrorText(err), 'error'); }
   };
 
   // เรนเดอร์เป็น "ฟังก์ชัน" (ไม่ใช่ <Component/>) — JSX inline reconcile ตาม key แทนที่จะ unmount/remount ทุกครั้งที่ตั้ง dropDay (กัน flicker + drag event หลุดตอนลาก)
@@ -128,7 +144,7 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
       if (seen.has(key)) return; seen.add(key); dayInfos.push(info);
     }));
     return (
-      <button key={i} onClick={() => setSel(d)}
+      <button key={i} onClick={() => pickDay(d)} aria-pressed={isSel} aria-label={`วันที่ ${d} · ${all.length} งาน`}
         onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); if (dropDay !== d) setDropDay(d); }}
         onDragLeave={readOnly ? undefined : () => setDropDay(dd => dd === d ? null : dd)}
         onDrop={readOnly ? undefined : () => { setDragActive(false); reschedule(dragId.current, d); }}
@@ -160,7 +176,8 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
             return <span key={t.id} role="button" tabIndex={0}
               onClick={readOnly ? undefined : (ev) => { ev.stopPropagation(); openModal('task', { ...t, channel: Array.isArray(t.channel) ? t.channel : [t.channel] }); }}
               title={t.title + (c ? ` · ${c.name}` : '') + (multi ? ` · ${thaiDate(s)} → ${thaiDate(e)}` : '')}
-              style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: col, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.7, flexShrink: 0, cursor: readOnly ? 'default' : 'pointer' }}>{contPrev ? '‹ ' : ''}{t.title}{multi ? ' ›' : ''}</span>;
+              style={{ fontSize: 'var(--fs-micro)', fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: col, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.7, flexShrink: 0, cursor: readOnly ? 'default' : 'pointer',
+                opacity: doneIds.has(t.status) ? .45 : 1, textDecoration: doneIds.has(t.status) ? 'line-through' : 'none' }}>{contPrev ? '‹ ' : ''}{t.title}{multi ? ' ›' : ''}</span>;
           })}
         </div>
         {/* มือถือ: โชว์เป็นจุดสีแทน title (แตะดูรายละเอียดข้างล่าง) — รวมงานช่วงวันด้วย */}
@@ -205,7 +222,9 @@ export function CalendarView({ filtered, fProps, flow, readOnly }) {
           <div ref={dayRef} className="cal-day-panel p-[22px]" style={{ borderLeft: '1px solid var(--line)', background: 'var(--surface-2, transparent)' }}>
             <div className="eyebrow" style={{ marginBottom: 4 }}>{sel} {MONTHS_TH_SHORT[ym.m]} {ym.y}</div>
             <div className="row between" style={{ marginBottom: 14 }}>
-              <h3>{selTasks.length} งาน</h3>
+              <h3 className="flex items-center gap-2">{selTasks.length} งาน
+                {selOverdue > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--bad) 14%, transparent)', color: 'var(--bad)' }}>เลยกำหนด {selOverdue}</span>}
+              </h3>
               {!readOnly && <Button size="sm" onClick={() => openModal('task', { ...newTaskBase, date: `${greg}-${String(ym.m + 1).padStart(2, '0')}-${String(sel).padStart(2, '0')}` })}><Icon name="plus" /> เพิ่ม</Button>}
             </div>
             {selTasks.length === 0 ? (

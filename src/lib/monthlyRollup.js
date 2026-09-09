@@ -16,6 +16,12 @@ export function buildRollupRows(master) {
   for (const m of (master || [])) {
     const month = m.order_month;
     if (!month) continue;
+    /* ⚠️ ต้องตัดใบยกเลิกที่นี่ ไม่ใช่หวังให้ผู้เรียกกรองมาก่อน
+       หัวไฟล์เขียนว่ารับ master ที่ "ตัด cancelled แล้ว" แต่ modals-import ส่ง master ดิบ
+       (มีแต่ summarize() ที่กรอง) → ยอดที่ยกเลิกถูกบวกเข้าตารางเงินนี้
+       status 'unknown' (อ่านคอลัมน์สถานะไม่ได้) ก็ไม่นับ — ไม่รู้ว่าใบไหนยกเลิก = ไม่ควรเดา */
+    const st = String(m.status || '').toLowerCase();
+    if (st === 'cancelled' || st === 'unknown') continue;
     let r = byMonth.get(month);
     if (!r) { r = { id: month, month, orders: 0, qty: 0, sales: 0, profit: 0, commission: 0, by_channel: {} }; byMonth.set(month, r); }
     r.orders += 1;

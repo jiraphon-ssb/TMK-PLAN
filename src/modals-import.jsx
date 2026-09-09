@@ -130,6 +130,8 @@ export function MpImportModal({ onClose, onDone }) {
     const sseen = new Set(); const sku = sku0.filter(s => { const k = `${s.source}|${s.order_no}|${s.design}|${s.color}|${s.size}|${s.qty}|${s.line_sales}|${s.raw_sku_or_name || ''}`; if (sseen.has(k)) return false; sseen.add(k); return true; });
     return { master, sku, dropped: { orders: master0.length - master.length, skus: sku0.length - sku.length }, sum: summarize(master, sku), audit: auditImport(master, sku, M), cols: auditColumns(files) };
   }, [files, aliases]);
+  // ไฟล์ที่ขาดคอลัมน์บังคับ (หรือไม่รู้ชนิด) = บล็อกการบันทึก — ตัวเลขที่จะเขียนผิดแน่นอน
+  const colBlocked = (result?.cols || []).length > 0;
 
   const baht = n => '฿' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const save = async () => {
@@ -177,7 +179,12 @@ export function MpImportModal({ onClose, onDone }) {
       </>)
     : (<>
         <Button variant="outline" onClick={() => setStep(1)}>← ย้อนกลับ</Button>
-        <Button disabled={!result || saving} onClick={save}><Icon name="check" /> {saving ? 'กำลังบันทึก…' : `บันทึกลงระบบ (${N(result?.master.length || 0)} ออเดอร์)`}</Button>
+        {/* ⚠️ ขาดคอลัมน์บังคับ = ตัวเลขที่จะเขียนลงระบบผิดแน่นอน (qty/ยอด = 0 · ใบยกเลิกกลายเป็นใบปกติ)
+            แล้ว upsert ทับแถวเดิมที่ยอดถูกอยู่ → ต้องปิดปุ่ม ไม่ใช่แค่ขึ้นคำเตือนแล้วปล่อยกดได้ */}
+        <Button disabled={!result || saving || colBlocked} onClick={save}
+          title={colBlocked ? 'ไฟล์ขาดคอลัมน์บังคับ — แก้ไฟล์แล้วอัปใหม่ก่อน' : undefined}>
+          <Icon name="check" /> {saving ? 'กำลังบันทึก…' : colBlocked ? 'บันทึกไม่ได้ — ไฟล์ขาดคอลัมน์' : `บันทึกลงระบบ (${N(result?.master.length || 0)} ออเดอร์)`}
+        </Button>
       </>);
   return (
     <SideSheet size="xl" icon="external" title="นำเข้าข้อมูลมาร์เก็ตเพลส" sub={step === 1 ? 'ขั้น 1/2 · เลือกไฟล์' : 'ขั้น 2/2 · ตรวจข้อมูลก่อนบันทึก'} onClose={onClose} footer={footer}>

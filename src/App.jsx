@@ -1,7 +1,7 @@
 /* ============================================================
    TMK Operation — App shell, navigation, routing
    ============================================================ */
-import { useState, useEffect, useRef, useCallback, memo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, memo, Suspense } from 'react';
 import { TMK } from './data.js';
 import { Icon, PageSkeleton, FlowIcon } from './components.jsx';
 import { ConfirmHost } from './ui-confirm.jsx';
@@ -14,29 +14,26 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
 import tmkLogo from './assets/tmk-logo.png';
-import { HomeView, SalesView } from './views-1.jsx';
+import { HomeView } from './homeView.jsx';
+import { OfflineBar } from './components/OfflineBar.jsx';   // PART 103: SalesView ไม่ใช้แล้ว (section 'ยอดขาย' เดิมยุบเข้ารายงานขาย)
 import { Spotlight } from './Spotlight.jsx';
-import { PublicTrackPage } from './PublicTrackPage.jsx';
+import { lazyRetry } from './lib/lazyRetry.js';
 // Heavy views — code-split เป็น chunk แยก ลด main bundle (~330 kB)
 // views-1 (Home + Sales) คงเดิม เพราะ Home เป็นหน้าแรกหลัง login ต้องเร็ว
-const PlannerView  = lazy(() => import('./views-planner.jsx').then(m => ({ default: m.PlannerView  })));
-const CatalogView  = lazy(() => import('./views-catalog.jsx').then(m => ({ default: m.CatalogView  })));
-const SettingsView = lazy(() => import('./views-settings.jsx').then(m => ({ default: m.SettingsView })));
-const EntryView    = lazy(() => import('./views-entry.jsx').then(m => ({ default: m.EntryView })));
-const FlowsView    = lazy(() => import('./views-flows.jsx').then(m => ({ default: m.FlowsView })));
-const SalePerfView = lazy(() => import('./salePerf.jsx').then(m => ({ default: m.SalePerfView })));
-const LogView = lazy(() => import('./views-log.jsx').then(m => ({ default: m.LogView })));
-const PublicFlowShare = lazy(() => import('./flowPublicShare.jsx').then(m => ({ default: m.PublicFlowShare })));
+const PlannerView  = lazyRetry(() => import('./views-planner.jsx').then(m => ({ default: m.PlannerView  })), 'views-planner');
+const CatalogView  = lazyRetry(() => import('./views-catalog.jsx').then(m => ({ default: m.CatalogView  })), 'views-catalog');
+const SettingsView = lazyRetry(() => import('./views-settings.jsx').then(m => ({ default: m.SettingsView })), 'views-settings');
+const FlowsView    = lazyRetry(() => import('./views-flows.jsx').then(m => ({ default: m.FlowsView })), 'views-flows');
+const SalePerfView = lazyRetry(() => import('./salePerf.jsx').then(m => ({ default: m.SalePerfView })), 'salePerf');
+const LogView = lazyRetry(() => import('./views-log.jsx').then(m => ({ default: m.LogView })), 'views-log');
+const PublicFlowShare = lazyRetry(() => import('./flowPublicShare.jsx').then(m => ({ default: m.PublicFlowShare })), 'flowPublicShare');
+/* หน้า "มีอะไรใหม่" โหลดแยก — ไฟล์นั้น import changelog.js (~216 KB ข้อความย้อนหลังทุกเวอร์ชัน)
+   เดิม import แบบ static ทำให้ทุกคนโหลดข้อความที่ยังไม่ได้เปิดอ่าน ก่อนเห็นหน้าจอแรก */
+const WhatsNewPage = lazyRetry(() => import('./whatsNewPage.jsx').then(m => ({ default: m.WhatsNewPage })), 'whatsNewPage');
 // dialogs — lazy per split file (PART 79 · ดึงออกจาก index · LoginScreen คง eager = auth gate)
-const RecordSalesModal     = lazy(() => import('./modals-sale.jsx').then(m => ({ default: m.RecordSalesModal })));
-const HistoricalEntryModal = lazy(() => import('./modals-sale.jsx').then(m => ({ default: m.HistoricalEntryModal })));
-const TaskModal            = lazy(() => import('./modals-task.jsx').then(m => ({ default: m.TaskModal })));
-const ProductModal         = lazy(() => import('./modals-catalog.jsx').then(m => ({ default: m.ProductModal })));
-const OrderModal           = lazy(() => import('./modals-order.jsx').then(m => ({ default: m.OrderModal })));
-const CampaignModal        = lazy(() => import('./modals-ads.jsx').then(m => ({ default: m.CampaignModal })));
-const MonthlyTargetModal   = lazy(() => import('./modals-ads.jsx').then(m => ({ default: m.MonthlyTargetModal })));
-const AdCampaignModal      = lazy(() => import('./modals-ads.jsx').then(m => ({ default: m.AdCampaignModal })));
-const CustomerSegmentModal = lazy(() => import('./modals-ads.jsx').then(m => ({ default: m.CustomerSegmentModal })));
+const TaskModal            = lazyRetry(() => import('./modals-task.jsx').then(m => ({ default: m.TaskModal })), 'modals-task');
+const CampaignModal        = lazyRetry(() => import('./modals-ads.jsx').then(m => ({ default: m.CampaignModal })), 'modals-ads-campaign');
+const AdCampaignModal      = lazyRetry(() => import('./modals-ads.jsx').then(m => ({ default: m.AdCampaignModal })), 'modals-ads-ad');
 
 /* ---- Prefetch chunk ตอนเบราว์เซอร์ว่าง ---------------------------------------
    เดิม chunk ของแต่ละเมนูดาวน์โหลด "ตอนกดครั้งแรก" เท่านั้น
@@ -49,7 +46,6 @@ const PREFETCH_CHUNKS = [
   () => import('./views-planner.jsx'),
   () => import('./modals-task.jsx'),
   () => import('./views-catalog.jsx'),
-  () => import('./views-entry.jsx'),
   () => import('./modals-sale.jsx'),
   () => import('./salePerf.jsx'),
   () => import('./views-sale-submit.jsx'),
@@ -77,7 +73,9 @@ import { logAudit } from './lib/audit.js';
 import { parseTaskDate, todayISO, thaiDate } from './lib/dateUtils.js';
 import { DataProvider, useData } from './dataContext.jsx';
 import { UserProvider, useUser } from './userContext.jsx';
-import { UpdateBanner, useUnseenVersion, WhatsNewPage } from './WhatsNew.jsx';
+import { canSeeAuditLog } from './lib/roleAccess.js';
+import { promptConflictResolution } from './lib/optimisticUpdate.js';
+import { UpdateBanner, useUnseenVersion } from './WhatsNew.jsx';
 // ชิ้นส่วน shell + นิยามเมนู — แยกไฟล์ (ยกทั้งดุ้น ไม่แก้เนื้อใน)
 import { LoadingScreen, DataErrorScreen, SyncIndicator, ErrorBoundary, RealtimeStatus } from './appShellParts.jsx';
 import { NAV_DEF, useNav, DEFAULT_SUB, sidebarFlows, FlowsRows, NavTiles } from './appNav.jsx';
@@ -93,19 +91,32 @@ const accent = '#4f46e5'; // indigo-600 — แบรนด์ active/selected/i
    ทั้งที่ section/sub/ข้อมูล ไม่ได้เปลี่ยนเลย
    แยกเป็น component ระดับโมดูล + memo → เนื้อหาวาดใหม่เฉพาะตอน props ที่มันใช้จริงเปลี่ยน
    (go ส่งเป็น goStable ที่ identity คงที่ ไม่งั้น memo ไม่มีผล) */
-const SectionContent = memo(function SectionContent({ section, sub, go, tasks, setTasks, activeFlow, dark, setDark }) {
+const SectionContent = memo(function SectionContent({ section, sub, go, tasks, setTasks, activeFlow, dark, setDark, saleLocked = false, logsAllowed = false }) {
   let view;
   // Home + Sales (views-1) ไม่ lazy เพราะเป็นหน้าแรกหลัง login — ต้องเร็ว
   if (section === 'home') view = <HomeView go={go} />;
-  else if (section === 'whatsnew') view = <WhatsNewPage />;   // หน้า "มีอะไรใหม่" — ทุกคนเข้าได้ (ไม่ผูก settings)
-  else if (section === 'sales' && !['daily', 'monthly', 'status'].includes(sub)) view = <SalesView sub={sub} />;
+  else if (section === 'whatsnew') view = <Suspense fallback={<PageSkeleton />}><WhatsNewPage /></Suspense>;   // หน้า "มีอะไรใหม่" — ทุกคนเข้าได้ (ไม่ผูก settings)
+  // PART 103: section 'sales' เดิมถูกยุบเข้า 'catalog' (ชื่อ "ยอดขาย") — ลิงก์/ทางลัดเก่ายังเข้าได้ ไม่ 404
+  //   overview/channels → รายงานขาย · ads → แท็บโฆษณา · customers → แท็บลูกค้า · monthly → บันทึก & ภาพรวมเดือน
+  else if (section === 'sales') {
+    // ทางลัดยุคเก่า (section 'sales' ถูกยุบเข้า 'catalog' แล้ว) — ต้องเช็คสิทธิ์ของ 'catalog'
+    // เดิม go() เช็ค isLocked('sales') ซึ่งเป็นคีย์ที่ LockPicker สร้างไม่ได้อีกแล้ว → ล็อกหน้าไม่มีผลกับทางลัดนี้
+    view = saleLocked
+      ? <div className="content-inner"><div className="rounded-lg border p-6 text-center" style={{ color: 'var(--ink-3)' }}>ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน</div></div>
+      : <Suspense fallback={<PageSkeleton />}><CatalogView sub="report" /></Suspense>;
+  }
   else view = (
     // Heavy chunks — ห่อด้วย Suspense
     <Suspense fallback={<PageSkeleton />}>
       {/* PART 102: ลบหน้า "ส่งยอด & ข้อมูล" — ลิงก์เก่า (data/submit/io/entry) เด้งไปประสิทธิภาพเซล (มีปุ่มส่งยอด/คนทักในนั้น) */}
-      {section === 'catalog' && (sub === 'perf' || sub === 'data' || sub === 'submit' || sub === 'io' || sub === 'entry') ? <SalePerfView />
-        : section === 'sales' ? <EntryView sub={sub} />
-        : section === 'logs' ? <LogView />
+      {/* 'monthly' (บันทึก & ภาพรวมเดือน) ลบถาวร → เด้งไปรายงานขาย */}
+      {section === 'catalog' && sub === 'monthly' ? <CatalogView sub="report" />
+        : section === 'catalog' && (sub === 'perf' || sub === 'data' || sub === 'submit' || sub === 'io' || sub === 'entry') ? <SalePerfView />
+        /* ⚠️ "บันทึกกิจกรรม" = แอดมินเท่านั้น (CLAUDE.md + header ของ views-log.jsx เขียนว่า "gate ที่ App")
+           แต่ App ไม่เคยมี gate จริง — มีแค่ isLocked('logs') ซึ่งเป็น deny-list ที่ default = เข้าได้
+           log มี before→after ของ "เป้ายอด/เรตคอม" รายคน ซึ่งหน้าตั้งค่าและตารางรายคนกันไว้ให้ admin แล้ว */
+        : section === 'logs' ? (logsAllowed ? <LogView />
+          : <div className="rounded-lg border p-6 text-center" style={{ color: 'var(--ink-3)' }}>บันทึกกิจกรรมเปิดให้แอดมินเท่านั้น — ติดต่อแอดมิน</div>)
         : section === 'flows' ? <FlowsView sub={sub} tasks={tasks} setTasks={setTasks} activeFlow={activeFlow} />
         : section === 'planner' ? <PlannerView sub={sub} tasks={tasks} setTasks={setTasks} />
         : section === 'catalog' ? <CatalogView sub={sub} />
@@ -119,13 +130,20 @@ const SectionContent = memo(function SectionContent({ section, sub, go, tasks, s
 });
 
 export default function App() {
-  // ลูกค้าเปิดลิงก์ ?track=<code> → หน้าติดตามสาธารณะ (ไม่ต้องล็อกอิน, ไม่โหลดข้อมูลร้าน)
+  /* ลิงก์ ?track=<code> — หน้าติดตามพัสดุสาธารณะ ปิดใช้งานถาวร (PART 118)
+     ข้อมูลของหน้านี้มาจากตาราง tmk_orders ยุคเก่าที่ไม่มีใครเขียนตั้งแต่ PART 35 → ค้นยังไงก็ไม่เจอ
+     คงเส้นทางไว้เป็นข้อความสั้น ๆ เผื่อมีลูกค้าถือลิงก์เก่าอยู่ (ดีกว่าเจอหน้าล็อกอินแล้วงง) */
   const trackCode = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('track') : null;
   if (trackCode != null) {
     return (
-      <ErrorBoundary>
-        <LangProvider><ToastProvider><PublicTrackPage code={trackCode} /></ToastProvider></LangProvider>
-      </ErrorBoundary>
+      <div style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: 'var(--bg)', color: 'var(--ink)' }}>
+        <div style={{ maxWidth: 420, textAlign: 'center' }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>ระบบติดตามพัสดุออนไลน์ปิดให้บริการแล้ว</div>
+          <div style={{ fontSize: 14, color: 'var(--ink-3)', lineHeight: 1.7 }}>
+            สอบถามสถานะการจัดส่งได้ที่แชทที่สั่งซื้อไว้ ทีมงานตรวจให้ทันที
+          </div>
+        </div>
+      </div>
     );
   }
   // เปิดลิงก์ ?share=<token> → หน้าโครงการสาธารณะ อ่านอย่างเดียว (ไม่ต้องล็อกอิน · ไม่โหลดข้อมูลร้านทั้งหมด)
@@ -245,6 +263,7 @@ function AppInner() {
 
   // สิทธิ์แก้ไข: 'viewer' = ดูอย่างเดียว (เจ้าของ/แอดมิน/ผู้แก้ไข = แก้ได้) — default viewer ถ้าไม่อยู่ในระบบ
   const canEdit = (currentUserCtx?.role || 'viewer') !== 'viewer';
+  const isAdmin = canSeeAuditLog(currentUserCtx);   // gate หน้าที่เปิดให้แอดมินเท่านั้น (logs) — สูตรอยู่ lib/roleAccess.js
   const canEditRef = useRef(canEdit);
   // อัปเดตใน effect (ไม่เขียน ref ตอน render) — อ่านเฉพาะตอน event (openModal) จึงทันเสมอ
   useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
@@ -349,20 +368,26 @@ function AppInner() {
   const isLocked = (sec, s) => { const L = currentUserCtx?.lockedSections || []; return L.includes(sec) || (!!s && L.includes(sec + ':' + s)); };
   // หน้าย่อยแรกที่เข้าได้ของ section (null = ล็อกหมดทุกหน้าย่อย)
   const firstAllowedSub = (sec) => (NAV_DEF.find(n => n.id === sec)?.subs || []).map(x => x.id).find(id => !isLocked(sec, id)) || null;
+  /* คืน true = ไปถึงจริง · false = ถูกปฏิเสธ (ล็อก)
+     ผู้เรียกที่ทำอย่างอื่นต่อหลัง go() ต้องเช็คค่านี้ ไม่งั้นทำงานบนหน้าที่เพิ่งโดนห้าม
+     (เคสจริง: FAB มือถือ go() แล้ว setTimeout เปิดฟอร์มสร้างงานต่อทันที) */
   const go = (sec, s) => {
-    if (isLocked(sec)) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return; } // section ใหญ่ล็อก
-    if (s && isLocked(sec, s)) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return; } // หน้าย่อยที่ระบุถูกล็อก
+    // บันทึกกิจกรรม = แอดมินเท่านั้น (ไม่ใช่ deny-list) — บล็อกตั้งแต่นำทาง ทุกทางเข้า
+    if (sec === 'logs' && !isAdmin) { toast('บันทึกกิจกรรมเปิดให้แอดมินเท่านั้น', 'warn'); return false; }
+    if (isLocked(sec)) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return false; } // section ใหญ่ล็อก
+    if (s && isLocked(sec, s)) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return false; } // หน้าย่อยที่ระบุถูกล็อก
     let target = s;
     const hasSubs = (NAV_DEF.find(n => n.id === sec)?.subs || []).length > 0;
     if (!target && hasSubs) { // คลิก header — ใช้ default; ถ้า default ล็อก → หน้าย่อยแรกที่เข้าได้
       const def = subMap[sec] || DEFAULT_SUB[sec];
       target = def && !isLocked(sec, def) ? def : firstAllowedSub(sec);
-      if (!target) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return; } // ล็อกทุกหน้าย่อย
+      if (!target) { toast('ไม่มีสิทธิ์เข้าหน้านี้ — ติดต่อแอดมิน', 'warn'); return false; } // ล็อกทุกหน้าย่อย
     }
     setSection(sec);
     if (target) setSubMap(m => ({ ...m, [sec]: target }));
     setDrawer(false); setMenu(false);
     if (contentRef.current) contentRef.current.scrollTop = 0;
+    return true;
   };
   const goRef = useRef(go);
   // ตัวอ้างอิง go ที่ identity คงที่ — ส่งให้ <SectionContent> ที่ memo ไว้
@@ -385,10 +410,10 @@ function AppInner() {
 
 
 
-  // lazy-load (PART 33): โหลดตาราง deferred (adCamps/colorMix/sizeMix/fbMetrics) ตอนกดเข้า section ที่ใช้ — Sales/แคตตาล็อก/ตั้งค่า(export+คุมแอด)
+  // lazy-load (PART 33 · ลดเหลือ adCamps อย่างเดียวใน PART 109): โหลดตอนกดเข้า section ที่ใช้จริง
   useEffect(() => {
     if (dataVersion < 1) return;
-    if (section === 'sales' || section === 'catalog' || section === 'settings') dataEnsure?.(['adCamps', 'colorMix', 'sizeMix', 'fbMetrics']);
+    if (section === 'sales' || section === 'catalog' || section === 'settings') dataEnsure?.(['adCamps']);
   }, [section, dataVersion, dataEnsure]);
 
   // Prefetch chunk ของเมนูอื่นตอนว่าง — เริ่มหลังข้อมูลชุดแรกมาแล้ว (ไม่แย่ง bandwidth กับ query ตอนเปิดแอป)
@@ -483,7 +508,7 @@ function AppInner() {
           <SidebarGroup>
             <SidebarGroupLabel>ระบบ</SidebarGroupLabel>
             <SidebarMenu>
-              {NAV.filter(n => !n.subs && n.id !== 'home').map(n => {
+              {NAV.filter(n => !n.subs && n.id !== 'home' && !(n.id === 'logs' && !isAdmin)).map(n => {
                 const L = isLocked(n.id);
                 return (
                   <SidebarMenuItem key={n.id}>
@@ -545,9 +570,11 @@ function AppInner() {
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => go('settings', 'general')} className="cursor-pointer">
-                      <Icon name="system" className="size-4 mr-2 text-muted-foreground" />
+                    {/* ล็อกหน้าตั้งค่าไว้ = ต้องเห็นว่าล็อก (เหมือนแผงมือถือด้านล่าง) — เดิมกดแล้วเงียบ ไม่มีอะไรเกิดขึ้น */}
+                    <DropdownMenuItem onClick={() => go('settings', 'general')} disabled={isLocked('settings')} className="cursor-pointer">
+                      <Icon name={isLocked('settings') ? 'lock' : 'system'} className="size-4 mr-2 text-muted-foreground" />
                       ตั้งค่า
+                      {isLocked('settings') && <span className="ml-auto text-[11px] text-muted-foreground">ถูกล็อก</span>}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => go('whatsnew')} className="cursor-pointer">
                       <Icon name="sparkle" className="size-4 mr-2 text-muted-foreground" />
@@ -586,7 +613,7 @@ function AppInner() {
                           <DropdownMenuTrigger className="flex items-center gap-1.5 focus:outline-none">
                             {sub === 'overview' ? <Icon name="grid" className="size-4 opacity-70" /> : sub === 'mytasks' ? <Icon name="user" className="size-4 opacity-70" /> : <FlowIcon icon={cur?.icon} className="size-4" />}
                             <span className="truncate max-w-[180px]">{sub === 'overview' ? 'โครงการทั้งหมด' : sub === 'mytasks' ? 'งานของฉัน' : (cur?.name || 'โครงการ')}</span>
-                            <Icon name="down" className="size-3 ml-0.5 opacity-50" />
+                            <Icon name="chevD" className="size-3 ml-0.5 opacity-50" />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start" className="w-56">
                             <DropdownMenuItem onClick={() => go('flows', 'overview')} className="cursor-pointer gap-2"><Icon name="grid" className="size-4" /><span className="flex-1">ภาพรวมโครงการ</span>{sub === 'overview' && <Icon name="check" className="size-4 text-primary" />}</DropdownMenuItem>
@@ -605,7 +632,7 @@ function AppInner() {
                       <DropdownMenu>
                         <DropdownMenuTrigger className="flex items-center gap-1 focus:outline-none">
                           {nav.label}
-                          <Icon name="down" className="size-3 ml-1 opacity-50" />
+                          <Icon name="chevD" className="size-3 ml-1 opacity-50" />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
                           {nav.subs.map(sub => (
@@ -648,10 +675,14 @@ function AppInner() {
             </div>
           </header>
 
+          <OfflineBar />
+
           <div className={'content' + (section === 'catalog' ? ' sale-section' : '')} ref={contentRef}>
             {/* คอลัมน์เนื้อหากลางเดียว (max 1280 · จัดกึ่งกลาง) — ทุกหน้าอยู่ตรงกลางเท่ากันไม่ว่าจะพับ sidebar หรือไม่ */}
             <div className="content-inner">
               <SectionContent
+                saleLocked={isLocked('catalog') || isLocked('catalog', 'report')}
+                logsAllowed={isAdmin}
                 section={section} sub={sub} go={goStable}
                 tasks={tasks} setTasks={setTasks} activeFlow={activeFlow}
                 dark={dark} setDark={setDark}
@@ -674,7 +705,8 @@ function AppInner() {
               </div>
               <Button variant="ghost" size="icon" onClick={() => setDrawer(false)}><Icon name="x" /></Button>
             </div>
-            {NAV.map(n => (
+            {/* ซ่อน logs จากคนที่ไม่ใช่แอดมิน เหมือน sidebar — ไม่งั้นเห็นแท็บแล้วกดได้แต่โดนปฏิเสธ */}
+            {NAV.filter(n => !(n.id === 'logs' && !isAdmin)).map(n => (
               <div key={n.id} style={{ marginBottom: 2 }}>
                 <button className={'panel-item' + (section === n.id ? ' active' : '')} style={isLocked(n.id) ? { opacity: .5 } : undefined} onClick={() => go(n.id)}>
                   <Icon name={n.icon} />{n.label}{isLocked(n.id) && <span style={{ marginLeft: 'auto', display: 'inline-flex' }}><Icon name="lock" className="size-3.5" /></span>}
@@ -701,22 +733,27 @@ function AppInner() {
       {/* mobile bottom tab bar */}
       <nav className="tabbar mobile-only">
         <div className="tabbar-inner">
-          {NAV.map(n => (
+          {NAV.filter(n => !(n.id === 'logs' && !isAdmin)).map(n => (
             <button key={n.id} className={'tab' + (section === n.id ? ' active' : '')} style={isLocked(n.id) ? { opacity: .45 } : undefined} onClick={() => go(n.id)}>
               <Icon name={isLocked(n.id) ? 'lock' : n.icon} /><span className="tab-label">{n.label}</span>
             </button>
           ))}
         </div>
       </nav>
-      {canEdit && <button className="fab mobile-only" title="เพิ่มรายการ" onClick={() => {
-        if (section === 'catalog') {
-          const m = { orders: 'order' }[sub] || 'product';
-          openModal(m); return;
-        }
-        if (section === 'sales') { openModal('record', { date: todayISO() }); return; }
-        if (isLocked('flows')) { go('flows', 'kanban'); return; } // go() toast เอง — กัน modal เด้งทั้งที่เข้าหน้าไม่ได้
-        go('flows', 'kanban'); setTimeout(() => openModal('task'), 100);
-      }}><Icon name="plus" /></button>}
+      {/* ปุ่ม ➕ มือถือ = "สร้างงานใหม่" อย่างเดียว (PART 119)
+          เดิมในเมนู Sale มันเปิดฟอร์มของระบบยุคเก่า (กรอกแล้วข้อมูลหาย · แก้ไป PART 116)
+          แล้วเปลี่ยนเป็น "พาไปหน้านั้น" ซึ่งกดบนหน้าเดิมแล้วไม่เกิดอะไรเลย = ปุ่มหลอก
+          ตอนนี้ทุกหน้าใน Sale มีปุ่มเพิ่มของตัวเองบนมือถืออยู่แล้ว (นับสต็อก · สร้างใบสั่งผลิต · เพิ่มออเดอร์)
+          → ซ่อน FAB ในเมนู Sale ไปเลย เหลือเฉพาะที่มันทำงานจริง */}
+      {/* ⚠️ ต้องเช็คล็อก "หน้าย่อย" ด้วย (flows:kanban) ไม่ใช่แค่ section
+          go() ปฏิเสธแล้วเด้ง toast แต่ setTimeout ยังเปิด modal ต่อ = เขียนงานลงบอร์ดที่เพิ่งโดนห้าม
+          และเปิด modal ก็ต่อเมื่อ go() ไปถึงจริง (ไม่ใช่ยิงทิ้งไว้ 100ms แล้วหวังว่าจะสำเร็จ) */}
+      {canEdit && section !== 'catalog' && !isLocked('flows') && !isLocked('flows', 'kanban') && (
+        <button className="fab mobile-only" title="สร้างงานใหม่" onClick={() => {
+          if (!go('flows', 'kanban')) return;
+          setTimeout(() => openModal('task'), 100);
+        }}><Icon name="plus" /></button>
+      )}
     </SidebarProvider>
   );
 
@@ -753,7 +790,7 @@ function AppInner() {
 
       {authed && modal && (
         <Suspense fallback={null}>{
-        modal.type === 'record' ? <RecordSalesModal data={modal.data} onClose={closeModal} />
+        modal.type === 'record' ? null // ฟอร์มยุคเก่า ลบแล้ว (PART 103)
         : modal.type === 'task' ? <TaskModal data={modal.data} onClose={closeModal}
             onDelete={async (task) => {
               setTasks(ts => ts.filter(x => x.id !== task.id)); // optimistic remove
@@ -810,6 +847,19 @@ function AppInner() {
                   sort_order: Number(task.sortOrder || 0), // ลำดับการ์ดในคอลัมน์ (graceful · migration 20260730)
                   brand_ids: Array.isArray(task.brandIds) ? task.brandIds : [], // แบรนด์ของงาน (graceful · migration 20260808)
                 };
+                /* ⚠️ แก้งานจาก popup เขียนทั้งแถวรวม status โดยไม่ guard row_version
+                   → A เปิดงานแก้รายละเอียด 3 นาที · ระหว่างนั้น B ลากงานเดียวกันไป "เสร็จ"
+                     A กดบันทึก → status กลับเป็น "กำลังทำ" ไม่มี conflict prompt ไม่มี toast
+                   ซึ่งขัดกับนโยบายของ optimisticUpdate.js เองที่ระบุ status เป็น field critical
+                   เช็คก่อนเขียน: ถ้าสถานะบนเซิร์ฟเวอร์ต่างจากตอนเปิดฟอร์ม ให้ถามผู้ใช้ */
+                if (task.id && task.rowVersion != null) {
+                  const cur = await supabase.from('tmk_tasks').select('status,row_version').eq('id', task.id).maybeSingle();
+                  if (!cur.error && cur.data && String(cur.data.row_version) !== String(task.rowVersion)
+                      && String(cur.data.status || '') !== String(dbTask.status || '')) {
+                    const choice = await promptConflictResolution({ entity: 'งาน', changedFields: ['status'] });
+                    if (choice !== 'overwrite') { dataRefresh?.(['tmk_tasks']); return; }
+                  }
+                }
                 let { error } = await supabase.from('tmk_tasks').upsert(dbTask);
                 // graceful: ถ้าคอลัมน์เสริม (flow_id/tags/date_end/subtasks/sort_order/brand_ids) ยังไม่ migrate → ตัดเฉพาะที่ขาดแล้วลองใหม่
                 if (error && /(flow_id|tags|date_end|subtasks|sort_order|brand_ids)/.test(error.message || '')) {
@@ -858,13 +908,8 @@ function AppInner() {
                 toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
               }
             }} />
-        : modal.type === 'product' ? <ProductModal data={modal.data} onClose={closeModal} />
-        : modal.type === 'order' ? <OrderModal data={modal.data} onClose={closeModal} />
         : modal.type === 'campaign' ? <CampaignModal data={modal.data} onClose={closeModal} />
-        : modal.type === 'monthlyTarget' ? <MonthlyTargetModal data={modal.data} onClose={closeModal} />
         : modal.type === 'adCampaign' ? <AdCampaignModal data={modal.data} onClose={closeModal} />
-        : modal.type === 'customerSegment' ? <CustomerSegmentModal onClose={closeModal} />
-        : modal.type === 'historical' ? <HistoricalEntryModal onClose={closeModal} data={modal.data} />
         : null
       }</Suspense>
       )}

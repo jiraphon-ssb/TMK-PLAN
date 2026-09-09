@@ -172,3 +172,35 @@ describe('crmTargetProgress', () => {
     expect(r.pct).toBe(120);
   });
 });
+
+// D8 ([[crm-team-definition]]): buildCrmMonth รับ Set/array = scope "ทีม CRM" (คนมีเป้า CRM)
+describe('buildCrmMonth — team scope (D8)', () => {
+  const orders = [
+    { order_no: 'F1', salesperson: 'FAH', channel: 'LINE', sales: 1000, order_date: '2026-09-05', status: 'confirmed', customer_code: 'C1' },
+    { order_no: 'F2', salesperson: 'FAH', channel: 'Phone', sales: 500, order_date: '2026-09-06', status: 'confirmed', customer_code: 'C2' },
+    { order_no: 'F3', salesperson: 'FAH', channel: 'Facebook', sales: 9999, order_date: '2026-09-06', status: 'confirmed', customer_code: 'C3' }, // ไม่ใช่ CRM channel
+    { order_no: 'T1', salesperson: 'TUKTA', channel: 'LINE', sales: 700, order_date: '2026-09-07', status: 'confirmed', customer_code: 'C4' },   // นอกทีม
+  ];
+
+  it('Set(ทีม) → ยอด CRM เฉพาะสมาชิกทีม (TUKTA ที่มี LINE ไม่ถูกนับ)', () => {
+    const m = buildCrmMonth(orders, '2026-09', new Set(['FAH']));
+    expect(m.crmSales).toBe(1500);          // LINE 1000 + Phone 500 · Facebook ของ FAH ไม่นับ · LINE ของ TUKTA ไม่นับ
+    expect(m.lineSales).toBe(1000);
+    expect(m.phoneSales).toBe(500);
+  });
+
+  it('totalSales ยังเป็นยอดทั้งบริษัท (สัดส่วน CRM ไม่เพี้ยน)', () => {
+    const m = buildCrmMonth(orders, '2026-09', new Set(['FAH']));
+    expect(m.totalSales).toBe(1000 + 500 + 9999 + 700);
+  });
+
+  it("seller ชื่อเดียว (แบบเดิม) ยังทำงานเหมือนเดิม", () => {
+    const m = buildCrmMonth(orders, '2026-09', 'TUKTA');
+    expect(m.crmSales).toBe(700);
+  });
+
+  it("'' (ไม่ scope) = ยอด CRM ทุกคน — พฤติกรรมเดิมไม่เปลี่ยน", () => {
+    const m = buildCrmMonth(orders, '2026-09', '');
+    expect(m.crmSales).toBe(1000 + 500 + 700);
+  });
+});

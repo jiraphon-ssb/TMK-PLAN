@@ -36,7 +36,7 @@ describe('ReceiptHistory', () => {
   it('ยอดสรุปนับเฉพาะใบที่ยังใช้ได้ — ใบยกเลิกไม่เข้ายอด แต่ยังเห็นอยู่', () => {
     setup();
     expect(screen.getByText('฿4,800')).toBeInTheDocument();     // 3000+1800 (ไม่รวม 900 ที่ยกเลิก)
-    expect(screen.getByText('· 2 ใบ')).toBeInTheDocument();
+    expect(screen.getByText('2 ใบ')).toBeInTheDocument();
     expect(screen.getByText('INV-003')).toBeInTheDocument();     // ใบยกเลิกยังแสดง
     expect(screen.getByText(/ยกเลิก · ลูกค้ายกเลิก/)).toBeInTheDocument();
   });

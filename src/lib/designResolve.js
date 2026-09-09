@@ -104,11 +104,22 @@ export function makeSkuResolver({ catalogByCode = {}, aliasMap = {}, skuOverride
 // helper: โหลด map ทั้ง 3 จาก Supabase พร้อม graceful fallback (ตารางอาจยังไม่มี)
 // คืน { catalogByCode, aliasMap, skuOverrides } — ตารางที่ error → map ว่าง
 export async function loadResolverMaps(supabase) {
-  const safe = async (fn) => { try { const { data, error } = await fn(); return error ? [] : (data || []); } catch { return []; } };
+  /* ⚠️ แยก "ตารางยังไม่มี" (graceful ได้) ออกจาก "อ่านไม่ได้" (ต้องบอก)
+     tmk_sku_overrides = การแก้ลายรายบรรทัดที่ผู้ใช้ทำไว้ — อ่านไม่ได้แล้วเงียบ
+     = ชื่อลายที่แก้แล้วหายจากทุกรายงาน โดยไม่มีสัญญาณใด ๆ
+     คืน degraded ให้ผู้เรียกตัดสินใจ (เหมือน fetchProductDesigns ที่ทำถูกอยู่แล้ว) */
+  const failed = [];
+  const safe = async (fn, label) => {
+    try {
+      const { data, error } = await fn();
+      if (error) { if (!/does not exist|42P01/i.test(error.message || error.code || '')) failed.push(label); return []; }
+      return data || [];
+    } catch { failed.push(label); return []; }
+  };
   const [cat, ali, ov, vers] = await Promise.all([
-    safe(() => supabase.from('tmk_shirt_catalog').select('code,name,job_type').limit(5000)),
-    safe(() => supabase.from('tmk_mp_aliases').select('kind,term,code,design').limit(5000)),
-    safe(() => supabase.from('tmk_sku_overrides').select('key,design,product_code').limit(20000)),
+    safe(() => supabase.from('tmk_shirt_catalog').select('code,name,job_type').limit(5000), 'แคตตาล็อกลาย'),
+    safe(() => supabase.from('tmk_mp_aliases').select('kind,term,code,design').limit(5000), 'ชื่อพ้องลาย'),
+    safe(() => supabase.from('tmk_sku_overrides').select('key,design,product_code').limit(20000), 'ลายที่แก้รายบรรทัด'),
     fetchAllVersions(),   // graceful: ตาราง versions ยังไม่มี → []
   ]);
   return {
@@ -116,6 +127,7 @@ export async function loadResolverMaps(supabase) {
     aliasMap: indexAliases(ali),
     skuOverrides: indexSkuOverrides(ov),
     versionIndex: buildVersionIndex(vers),   // as-of-date pinning (empty ถ้าไม่มีประวัติ → overhead 0)
+    degraded: failed,   // ไม่ว่าง = ชื่อลายบางส่วนอาจไม่ตรงของจริง (ผู้เรียกควรเตือน)
     _catalogRows: cat,   // เก็บไว้ใช้ job_type ต่อ
   };
 }
