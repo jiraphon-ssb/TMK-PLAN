@@ -296,17 +296,23 @@ export function DataProvider({ children }) {
     // - login ใหม่ → รอ SIGNED_IN แล้วค่อยโหลดด้วย JWT (AppInner โชว์ LoginScreen ก่อน data gate อยู่แล้ว — ไม่ติดจอโหลด)
     // - logout → เคลียร์ baseline ให้ SIGNED_IN คนถัดไปโหลดใหม่ (กันข้อมูลค้างข้าม user)
     let authSub = null;
+    /* Realtime ก็ต้องรอ session เหมือน load() — เดิม connectRealtime() ยิงตอน mount เลย
+       → หน้า login เปิด WS ทั้งที่ anon อ่านอะไรไม่ได้อยู่แล้ว (RLS คืน 0 แถว)
+       เปลือง connection + console หน้า login มี error (e2e จับได้บน CI 9 ก.ย. 69)
+       ประกาศเป็น let ตรงนี้ แล้ว assign ตัวจริงหลัง connectRealtime ถูกนิยามด้านล่าง */
+    let startRt = () => {};
     if (!isSupabaseConfigured) {
       load(); // ไม่ได้ตั้งค่า .env → ให้ load() รายงาน error ตามเดิม
     } else {
       (async () => {
         const { data } = await supabase.auth.getSession();
         if (!mountedRef.current) return;
-        if (data?.session) load();
+        if (data?.session) { load(); startRt(); }
         const res = supabase.auth.onAuthStateChange((event) => {
           if (!mountedRef.current) return;
           if (event === 'SIGNED_OUT') { rawRef.current = null; clearMapMemo(); } // ล้างแคช map ด้วย — กันข้อมูล user เดิมค้างข้ามคน
           if (event === 'SIGNED_IN' && !rawRef.current) load();
+          if (event === 'SIGNED_IN') startRt();   // login ใหม่ → ค่อยเปิด WS (idempotent — กันซ้ำใน startRt)
         });
         authSub = res?.data?.subscription || null;
       })();
@@ -395,7 +401,9 @@ export function DataProvider({ children }) {
       reconnectAttempts = 0;
       connectRealtime(); // ต่อไม่สำเร็จ → status handler จะ startPolling กลับให้เอง (interval+listener ตั้งใหม่)
     };
-    connectRealtime();
+    let rtStarted = false;
+    startRt = () => { if (rtStarted || !mountedRef.current) return; rtStarted = true; connectRealtime(); };
+    if (!isSupabaseConfigured) startRt();   // ไม่มี client → connectRealtime จะ startPolling ให้เอง (พฤติกรรมเดิม)
 
     return () => {
       mountedRef.current = false;
