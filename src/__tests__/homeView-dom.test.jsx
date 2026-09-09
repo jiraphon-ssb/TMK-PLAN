@@ -230,15 +230,19 @@ function deferredMergedMonth(firstDays, laterDays) {
    ผลคือเทสไปเรียก "ตัวจริง" ซึ่งยิงเน็ตจริงด้วย credential ใน .env ของเครื่องนั้น
    → เครื่อง dev เขียว (มี .env) แต่ CI แดง (ไม่มี) · และเทสก็ไม่ hermetic ด้วย
    ทุกบล็อกที่ resetModules ต้องเรียกตัวนี้ต่อทันที (เจอตอน CI แดง 9 ก.ย. 69) */
-const remockData = () => {
+const remockData = (over = {}) => {
   vi.doMock('../lib/supabaseClient.js', () => ({
     supabase: { from: () => ({ select: () => ({ gte: () => ({ lte: async () => ({ data: [], error: null }) }), eq: async () => ({ data: [], error: null }), maybeSingle: async () => ({ data: null, error: null }) }) }) },
     isSupabaseConfigured: true,
   }));
+  /* over = ให้เทสสั่งพฤติกรรมเฉพาะเคสได้ "ในที่เดียว"
+     ห้ามให้เทสไป doMock('../lib/saleData.js') ซ้อนทีหลัง — ลำดับการทับไม่แน่นอน
+     (CI แดง 9 ก.ย. 69 เพราะเคสหนึ่งตั้งใจให้ cachedFetchRange คืน error แล้วโดนตัวนี้ทับ) */
   vi.doMock('../lib/saleData.js', async (orig) => ({
     ...(await orig()),
     cachedFetchRange: async () => ({ data: [], error: null }),
     cachedFetchAll: async () => ({ data: [], error: null }),
+    ...over,
   }));
   vi.doMock('../lib/targets.js', async (orig) => ({
     ...(await orig()),
@@ -343,18 +347,16 @@ describe('หน้าแรก · อ่านยอดไม่สำเร็
 describe('หน้าแรก · ออเดอร์อ่านไม่ได้แต่ยอดเดือนมาจาก cache', () => {
   it('อันดับเซลล์ว่างทั้งกระดาน = ต้องมีแถบเตือน ไม่ใช่โชว์เป็นข้อเท็จจริง', async () => {
     vi.resetModules();
-    remockData();
+    // ส่งพฤติกรรมเฉพาะเคสผ่าน remockData (ห้าม doMock saleData ซ้อนทีหลัง — ลำดับทับไม่แน่นอน)
+    remockData({
+      cachedFetchRange: async (table) => (table === 'tmk_mp_orders'
+        ? { data: null, error: { message: 'JWT expired', code: 'PGRST301' } }
+        : { data: [], error: null }),
+    });
     // mergedMonth สำเร็จ (เหมือนได้จาก cache) แต่ query ออเดอร์พัง
     vi.doMock('../lib/mergedMonth.js', () => ({
       isMergedMonth: () => true,
       fetchMergedMonth: async () => ({ sales: 900000, orders: 30, ad: 0, channels: [], days: [] }),
-    }));
-    vi.doMock('../lib/saleData.js', async (orig) => ({
-      ...(await orig()),
-      cachedFetchRange: async (table) => (table === 'tmk_mp_orders'
-        ? { data: null, error: { message: 'JWT expired', code: 'PGRST301' } }
-        : { data: [], error: null }),
-      cachedFetchAll: async () => ({ data: [], error: null }),
     }));
     const { HomeView: HV } = await import('../homeView.jsx');
     render(<HV go={() => {}} />);
