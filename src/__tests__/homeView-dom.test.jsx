@@ -292,8 +292,16 @@ describe('หน้าแรก · อ่านยอดไม่สำเร็
     }));
     const { HomeView: HV } = await import('../homeView.jsx');
     render(<HV go={() => {}} />);
-    await waitFor(() => expect(screen.getByText('ยอดวันนี้')).toBeInTheDocument(), WF);
-    expect(screen.queryByText(/อ่านยอดขายไม่สำเร็จ/)).not.toBeInTheDocument();
+    /* ⚠️ ต้องรอ 2 เงื่อนไข "พร้อมกัน" ใน waitFor เดียว
+       รอ 'ยอดวันนี้' อย่างเดียวไม่พอ — label นั้นขึ้นพร้อมแถบเตือนได้ (ช่วงที่ยังโหลดไม่เสร็จ)
+         → บนเครื่องช้าอย่าง CI จะเช็คแถบเตือนตอนที่มันยังอยู่ = แดง (เกิดจริง 9 ก.ย. 69 commit bdd3ab1)
+       รอ "แถบเตือนหาย" อย่างเดียวก็ไม่พอ — ตอนยังเป็นโครงร่าง (skeleton) ก็ไม่มีแถบเตือนอยู่แล้ว
+         → ผ่านทันทีตั้งแต่ยังไม่โหลด แล้ว getByText('ยอดวันนี้') ล้มเพราะหน้ายังไม่ขึ้น
+       รวมไว้ในก้อนเดียว = retry จนกว่าจะ "โหลดเสร็จ และ ไม่มีแถบเตือน" พร้อมกันจริง ๆ */
+    await waitFor(() => {
+      expect(screen.getByText('ยอดวันนี้')).toBeInTheDocument();
+      expect(screen.queryByText(/อ่านยอดขายไม่สำเร็จ/)).not.toBeInTheDocument();
+    }, WF);
     vi.doUnmock('../lib/mergedMonth.js');
   });
 });
@@ -357,8 +365,16 @@ describe('หน้าแรก · ยอดขาดของบางส่ว
     mockMM({ manualOk: true, funnelOk: true });
     const { HomeView: HV } = await import('../homeView.jsx');
     render(<HV go={() => {}} />);
-    await waitFor(() => expect(screen.getByText('ยอดวันนี้')).toBeInTheDocument(), WF);
-    expect(screen.queryByText(/อ่านยอดขายไม่สำเร็จ/)).not.toBeInTheDocument();
+    /* ⚠️ ต้องรอ 2 เงื่อนไข "พร้อมกัน" ใน waitFor เดียว
+       รอ 'ยอดวันนี้' อย่างเดียวไม่พอ — label นั้นขึ้นพร้อมแถบเตือนได้ (ช่วงที่ยังโหลดไม่เสร็จ)
+         → บนเครื่องช้าอย่าง CI จะเช็คแถบเตือนตอนที่มันยังอยู่ = แดง (เกิดจริง 9 ก.ย. 69 commit bdd3ab1)
+       รอ "แถบเตือนหาย" อย่างเดียวก็ไม่พอ — ตอนยังเป็นโครงร่าง (skeleton) ก็ไม่มีแถบเตือนอยู่แล้ว
+         → ผ่านทันทีตั้งแต่ยังไม่โหลด แล้ว getByText('ยอดวันนี้') ล้มเพราะหน้ายังไม่ขึ้น
+       รวมไว้ในก้อนเดียว = retry จนกว่าจะ "โหลดเสร็จ และ ไม่มีแถบเตือน" พร้อมกันจริง ๆ */
+    await waitFor(() => {
+      expect(screen.getByText('ยอดวันนี้')).toBeInTheDocument();
+      expect(screen.queryByText(/อ่านยอดขายไม่สำเร็จ/)).not.toBeInTheDocument();
+    }, WF);
     vi.doUnmock('../lib/mergedMonth.js');
   });
 });
